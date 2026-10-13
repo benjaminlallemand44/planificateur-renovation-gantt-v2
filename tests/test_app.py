@@ -53,3 +53,21 @@ def test_batiment_scolaire_et_agenda():
     assert not at.exception
     assert any("Les travaux démarrent" in i.value for i in at.info)
     assert at.metric[0].value != fin
+
+
+def test_onglet_suivi_avec_avancement_et_reference():
+    from datetime import date
+
+    from renovation_gantt.avancement import Avancement, Statut
+
+    at = AppTest.from_file(APP, default_timeout=30)
+    at.session_state["avancement"] = {"CT_CSPS": Avancement(Statut.TERMINEE, date(2025, 1, 6), date(2025, 3, 3))}
+    at.run()
+    at.selectbox(key="etat").set_value(EtatProjet.MOE_SELECTIONNEE).run()
+    assert not at.exception
+    assert any("Planning actualisé" in c.value for c in at.caption)
+    figer = next(b for b in at.button if "Figer" in b.label)
+    figer.click().run()
+    assert not at.exception
+    assert len(at.session_state["references"]) == 1
+    assert any("Météo du projet : Dans les temps" in s.value for s in at.success)

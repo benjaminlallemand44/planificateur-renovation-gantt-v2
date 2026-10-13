@@ -16,6 +16,7 @@ from .planning import (
     TYPE_GPA,
     TYPE_INSTRUCTION,
     TYPE_PHASE,
+    TYPE_REALISE,
     TYPE_RECOURS,
     Planning,
 )
@@ -28,11 +29,17 @@ COULEURS_TYPES = {
     TYPE_RECOURS: "#c3a6e8",
     TYPE_ATTENTE: "#f6d55c",
     TYPE_GPA: "#b8dcc6",
+    TYPE_REALISE: "#6b7280",
 }
+COULEUR_REFERENCE = "#9aa0a6"
 COULEUR_TREVE = "#e6e6e6"
 
 
-def figure_gantt(planning: Planning, aujourd_hui: date | None = None) -> go.Figure:
+def figure_gantt(
+    planning: Planning,
+    aujourd_hui: date | None = None,
+    reference: dict[str, tuple[date, date]] | None = None,
+) -> go.Figure:
     """Diagramme de Gantt : barres par phase, bandeaux par catégorie et jalons."""
     df = planning.taches.copy()
     if df.empty:
@@ -73,6 +80,8 @@ def figure_gantt(planning: Planning, aujourd_hui: date | None = None) -> go.Figu
     _ajouter_treve(fig, planning)
     _ajouter_bandeaux(fig, df)
     _ajouter_jalons(fig, planning)
+    if reference:
+        _ajouter_reference(fig, df, reference)
     if aujourd_hui and planning.date_debut <= aujourd_hui <= planning.date_fin_affichage:
         _ligne_verticale(fig, aujourd_hui, "Aujourd'hui", "#888888", "dot")
 
@@ -84,6 +93,39 @@ def figure_gantt(planning: Planning, aujourd_hui: date | None = None) -> go.Figu
         title=dict(text="📅 Diagramme de Gantt du projet", font=dict(size=18, color="#0915a6")),
     )
     return fig
+
+
+def _ajouter_reference(fig: go.Figure, df: pd.DataFrame, reference: dict[str, tuple[date, date]]) -> None:
+    """Contour pointillé de chaque élément tel que prévu dans le planning de référence."""
+    # Position des lignes sur l'axe catégoriel, dans l'ordre retenu par Plotly.
+    positions = {nom: i for i, nom in enumerate(fig.layout.yaxis.categoryarray)}
+    ligne_par_id = dict(zip(df["Id"], df["Tache"], strict=True))
+    for id_, (debut, fin) in reference.items():
+        if id_ not in ligne_par_id:
+            continue
+        y = positions[ligne_par_id[id_]]
+        fig.add_shape(
+            type="rect",
+            xref="x",
+            yref="y",
+            x0=pd.Timestamp(debut),
+            x1=pd.Timestamp(fin),
+            y0=y - 0.45,
+            y1=y + 0.45,
+            line=dict(color=COULEUR_REFERENCE, width=1.5, dash="dot"),
+            fillcolor="rgba(0,0,0,0)",
+            layer="above",
+        )
+    fig.add_trace(
+        go.Scatter(
+            x=[None],
+            y=[None],
+            mode="markers",
+            marker=dict(symbol="square-open", size=14, color=COULEUR_REFERENCE),
+            name="Planning de référence",
+            hoverinfo="skip",
+        )
+    )
 
 
 def _ajouter_treve(fig: go.Figure, planning: Planning) -> None:

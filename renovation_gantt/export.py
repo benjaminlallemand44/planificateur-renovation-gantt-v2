@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 
+from .avancement import Avancement, Statut
 from .phases import (
     FINANCEMENT_APRES_DEFAUT,
     TREVE_SEMAINES_DEFAUT,
@@ -21,6 +22,7 @@ from .phases import (
     phases_pour_etat,
 )
 from .planning import Planning, calculer_planning
+from .suivi import Reference
 
 VERSION_SCENARIO = 1
 
@@ -136,6 +138,14 @@ class Scenario:
     financement_apres: str | None = FINANCEMENT_APRES_DEFAUT
     batiment_scolaire: bool = False
     fenetre_travaux: FenetreTravaux = FenetreTravaux.AUCUNE
+    nom_projet: str = ""
+    # Suivi : avancement saisi par élément et plannings de référence figés (voir suivi.Reference).
+    avancement: dict[str, Avancement] = field(default_factory=dict)
+    references: list[Reference] = field(default_factory=list)
+
+    @property
+    def suivi_actif(self) -> bool:
+        return any(av.statut is not Statut.A_VENIR for av in self.avancement.values())
 
     def appliquer(self, phases: list[Phase]) -> list[Phase]:
         """Applique les durées personnalisées en respectant les minimums réglementaires."""
@@ -151,7 +161,8 @@ class Scenario:
     def phases(self) -> list[Phase]:
         return self.appliquer(phases_pour_etat(self.etat))
 
-    def planning(self) -> Planning:
+    def planning(self, aujourd_hui: date | None = None) -> Planning:
+        """Planning actualisé ; ``aujourd_hui`` n'est pris en compte que si un avancement a été saisi."""
         return calculer_planning(
             self.phases(),
             self.date_debut,
@@ -160,6 +171,8 @@ class Scenario:
             self.treve_semaines,
             self.financement_apres,
             fenetre_travaux=self.fenetre_travaux if self.batiment_scolaire else FenetreTravaux.AUCUNE,
+            avancement=self.avancement,
+            aujourd_hui=aujourd_hui if self.suivi_actif else None,
         )
 
     def vers_json(self) -> str:
@@ -180,6 +193,9 @@ class Scenario:
                 "financement_apres": self.financement_apres,
                 "batiment_scolaire": self.batiment_scolaire,
                 "fenetre_travaux": self.fenetre_travaux.name,
+                "nom_projet": self.nom_projet,
+                "avancement": {k: v.vers_dict() for k, v in self.avancement.items() if v != Avancement()},
+                "references": [r.vers_dict() for r in self.references],
             },
             ensure_ascii=False,
             indent=2,
@@ -209,6 +225,9 @@ class Scenario:
                 financement_apres=donnees.get("financement_apres"),
                 batiment_scolaire=bool(donnees.get("batiment_scolaire", False)),
                 fenetre_travaux=FenetreTravaux[donnees.get("fenetre_travaux", "AUCUNE")],
+                nom_projet=donnees.get("nom_projet") or "",
+                avancement={k: Avancement.depuis_dict(v) for k, v in (donnees.get("avancement") or {}).items()},
+                references=[Reference.depuis_dict(r) for r in donnees.get("references") or []],
             )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ValueError(f"Fichier de scénario invalide : {exc}") from exc

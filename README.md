@@ -53,7 +53,20 @@ fichier `app.py`.
 - **Exports** : **PDF A4 paysage prêt à présenter** (Gantt, synthèse, jalons, détail des phases),
   Excel (feuilles Résumé, Planning, Jalons), CSV (compatible Excel FR), **jalons au format agenda (.ics)** pour
   Outlook ou Google Agenda, et image du Gantt (icône 📷).
-- **Scénarios** : enregistrer ses paramètres en JSON et les recharger plus tard.
+- **Scénarios** : enregistrer ses paramètres (et le suivi) en JSON et les recharger plus tard.
+
+### Onglet « Suivi de l'avancement »
+
+- **Saisie de l'avancement** de chaque étape (à venir / en cours / terminée, dates réelles, commentaire),
+  y compris les dossiers de financement et l'instruction de l'autorisation.
+- **Planning recalculé** à partir du réel : les étapes à venir ne démarrent pas dans le passé, une étape en
+  cours qui dépasse sa durée est signalée.
+- **Plannings de référence** figés (par exemple à chaque délibération) : écarts par étape et sur la date de fin,
+  contours pointillés de la référence sur le Gantt.
+- **Météo du projet** (dans les temps / glissement / glissement important), **points d'attention** et
+  **prochaines étapes**.
+- **Point d'avancement pour les élus** : PDF synthétique (météo, chiffres clés, prochaines étapes, points
+  d'attention, Gantt actualisé).
 - **Glossaire** complet des phases de la loi MOP (y compris VISA et DET), et définitions affichées au survol des barres.
 
 ## Ce qui change par rapport à la v1
@@ -66,7 +79,7 @@ fichier `app.py`.
 | VISA et DET absents du glossaire | Glossaire complet |
 | Pas de bandeau ni de délai MO pour l'AMO | Bandeau AMO et délai de validation |
 | Gantt effacé à chaque modification (bouton) | Gantt recalculé en direct |
-| Tests cassés (modules `config`/`gantt` inexistants) | 94 tests pytest, dont des tests de l'interface (`AppTest`) |
+| Tests cassés (modules `config`/`gantt` inexistants) | 113 tests pytest, dont des tests de l'interface (`AppTest`) |
 | README non à jour | README, CI GitHub Actions (Python 3.11 à 3.14), ruff |
 | Pas d'export ni de date de fin | Excel, CSV, JSON, jalons, indicateurs |
 
@@ -78,7 +91,9 @@ renovation_gantt/
 ├── phases.py               États, phases, durées par défaut, glossaire
 ├── planning.py             Calcul des dates et des jalons (sans Streamlit)
 ├── charts.py               Diagramme de Gantt Plotly
-├── export.py               Excel / CSV / scénarios JSON
+├── avancement.py           Avancement réel saisi (statut, dates, commentaire)
+├── suivi.py                Plannings de référence, écarts, météo, points d'attention
+├── export.py               Excel / CSV / agenda .ics / scénarios JSON
 └── pdf.py                  Export PDF (Gantt matplotlib + mise en page fpdf2)
 tests/                      Tests pytest
 images/                     Logo ACTEE
