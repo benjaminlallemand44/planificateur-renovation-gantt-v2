@@ -30,8 +30,12 @@ from .phases import (
     ARTICLES_INSTRUCTION,
     DEFINITION_FINANCEMENT,
     DEFINITION_GPA,
+    ETE_DEBUT,
+    ETE_DEMARRAGE_TARDIF_JOURS,
+    ETE_FIN,
     MOIS_RECOURS_TIERS,
     Autorisation,
+    FenetreTravaux,
     Groupe,
     Phase,
     definition_courte,
@@ -45,14 +49,17 @@ TYPE_RECOURS = "Recours des tiers"
 TYPE_ATTENTE = "Attente"
 TYPE_GPA = "Garantie de parfait achèvement"
 
-# La réception des travaux a lieu à la fin de cette phase ; la GPA court ensuite un an.
+# Phase des travaux : la réception a lieu à sa fin, la GPA court ensuite un an,
+# et c'est elle que contraint la fenêtre de travaux des bâtiments scolaires.
 ID_RECEPTION = "DET"
+ID_TRAVAUX = "DET"
 MOIS_GPA = 12
 
 MOTIFS_ATTENTE = {
     "AUTORISATION": "autorisation d'urbanisme",
     "FINANCEMENT": "dossier de financement complet",
     "CT_CSPS": "recrutement du CT et du CSPS",
+    "ETE": "début des vacances d'été",
 }
 
 COLONNES = ["Id", "Tache", "Debut", "Fin", "Type", "Groupe", "Definition", "Semaines"]
@@ -89,6 +96,9 @@ class Planning:
     attentes: list[Attente] = field(default_factory=list)
     autorisation: Autorisation | None = None
     treve_semaines: int = 0
+    fenetre_travaux: FenetreTravaux = FenetreTravaux.AUCUNE
+    # Si les travaux attendent l'été : jours à gagner en amont pour démarrer un été plus tôt.
+    gain_pour_ete_precedent_jours: int = 0
 
     @property
     def duree_totale_semaines(self) -> float:
@@ -127,6 +137,7 @@ def calculer_planning(
     treve_semaines: int = 0,
     financement_apres: str | None = None,
     gpa: bool = True,
+    fenetre_travaux: FenetreTravaux = FenetreTravaux.AUCUNE,
 ) -> Planning:
     """Calcule les dates de chaque phase.
 
@@ -136,6 +147,7 @@ def calculer_planning(
     ``autorisation`` à ``None`` désactive la modélisation de l'instruction réglementaire.
     ``treve_semaines`` : nombre de semaines non travaillées se terminant le 1er janvier (0 = aucune).
     ``gpa`` : affiche la garantie de parfait achèvement après la réception.
+    ``fenetre_travaux`` : contrainte des vacances d'été pour les bâtiments scolaires.
     """
     if isinstance(date_debut, pd.Timestamp):
         date_debut = date_debut.date()
@@ -145,6 +157,7 @@ def calculer_planning(
     jalons: list[Jalon] = []
     attentes: list[Attente] = []
     fins: dict[str, date] = {}
+    gain_ete = 0
     ligne_gpa: tuple[dict, ...] = ()
 
     def ajouter_financement(depart: date) -> None:
@@ -198,20 +211,32 @@ def calculer_planning(
             continue
 
         depart = attendre(phase.prerequis, courant, phase)
-        debut, fin_phase = _etaler(depart, phase.duree, ferme)
+        contrainte_ete = phase.id == ID_TRAVAUX and fenetre_travaux is not FenetreTravaux.AUCUNE
+        if contrainte_ete:
+            fins["ETE"] = prochain_ete(depart)
+            if fins["ETE"] > depart:
+                gain_ete = (depart - date(fins["ETE"].year - 1, *ETE_DEBUT)).days
+            depart = attendre(("ETE",), depart, phase)
+
+        if contrainte_ete and fenetre_travaux is FenetreTravaux.ETE_UNIQUEMENT:
+            segments = _segments(depart, phase.duree, lambda jour: not _en_ete(jour))
+        else:
+            segments = [_etaler(depart, phase.duree, ferme)]
+        fin_phase = segments[-1][1]
         if phase.duree > 0:
-            lignes.append(
-                _ligne(
-                    phase.id,
-                    phase.libelle,
-                    debut,
-                    fin_phase,
-                    TYPE_PHASE,
-                    phase.groupe,
-                    definition_courte(phase),
-                    phase.duree,
+            for debut, fin_segment in segments:
+                lignes.append(
+                    _ligne(
+                        phase.id,
+                        phase.libelle,
+                        debut,
+                        fin_segment,
+                        TYPE_PHASE,
+                        phase.groupe,
+                        definition_courte(phase),
+                        (fin_segment - debut).days / 7 if len(segments) > 1 else phase.duree,
+                    )
                 )
-            )
         fin = attendre(phase.prerequis_signature, fin_phase, phase)
         if phase.delai_mo > 0:
             debut_delai, fin = _etaler(fin, phase.delai_mo, ferme)
@@ -269,6 +294,8 @@ def calculer_planning(
         attentes=attentes,
         autorisation=autorisation,
         treve_semaines=treve_semaines,
+        fenetre_travaux=fenetre_travaux,
+        gain_pour_ete_precedent_jours=gain_ete,
     )
 
 
@@ -342,6 +369,39 @@ def periodes_treve(debut: date, fin: date, treve_semaines: int) -> list[tuple[da
         if debut_treve < fin and fin_treve > debut:
             periodes.append((debut_treve, fin_treve))
     return periodes
+
+
+def _en_ete(jour: date) -> bool:
+    return date(jour.year, *ETE_DEBUT) <= jour < date(jour.year, *ETE_FIN)
+
+
+def prochain_ete(jour: date) -> date:
+    """Date de démarrage des travaux la plus proche compatible avec les vacances d'été.
+
+    Un chantier peut démarrer en cours de vacances s'il en reste au moins deux semaines."""
+    debut = date(jour.year, *ETE_DEBUT)
+    if jour <= debut:
+        return debut
+    if jour <= date(jour.year, *ETE_FIN) - timedelta(days=ETE_DEMARRAGE_TARDIF_JOURS):
+        return jour
+    return date(jour.year + 1, *ETE_DEBUT)
+
+
+def _segments(debut: date, semaines: float, ferme: Callable[[date], bool]) -> list[tuple[date, date]]:
+    """Comme ``_etaler``, mais renvoie chaque période de travail continue (début inclus, fin exclue)."""
+    segments: list[tuple[date, date]] = []
+    jour, restant, debut_segment = debut, round(semaines * 7), None
+    while restant > 0:
+        if ferme(jour):
+            if debut_segment is not None:
+                segments.append((debut_segment, jour))
+                debut_segment = None
+        else:
+            debut_segment = debut_segment or jour
+            restant -= 1
+        jour += timedelta(days=1)
+    segments.append((debut_segment or jour, jour))
+    return segments
 
 
 def _etaler(debut: date, semaines: float, ferme: Callable[[date], bool]) -> tuple[date, date]:

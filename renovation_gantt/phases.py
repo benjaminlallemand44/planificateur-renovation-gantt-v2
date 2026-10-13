@@ -197,6 +197,23 @@ TREVE_SEMAINES_DEFAUT = 2
 
 
 # --------------------------------------------------------------------------
+# Bâtiments scolaires : fenêtre de travaux pendant les vacances d'été
+
+
+class FenetreTravaux(str, Enum):
+    AUCUNE = "Pas de contrainte (travaux en site occupé)"
+    DEBUT_ETE = "Démarrer les travaux au début des vacances d'été"
+    ETE_UNIQUEMENT = "Travaux uniquement pendant les vacances d'été (sur plusieurs étés si nécessaire)"
+
+
+# Vacances d'été approximatives (début inclus, fin exclue), à ajuster au calendrier de la zone.
+ETE_DEBUT = (7, 6)
+ETE_FIN = (9, 1)
+# Un chantier peut encore démarrer s'il reste au moins ce nombre de jours de vacances.
+ETE_DEMARRAGE_TARDIF_JOURS = 14
+
+
+# --------------------------------------------------------------------------
 # Catalogue des phases
 
 _ETUDES_SANS_AUDIT = [

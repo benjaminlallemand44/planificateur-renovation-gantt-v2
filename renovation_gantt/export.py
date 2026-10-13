@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 
@@ -14,6 +15,7 @@ from .phases import (
     TREVE_SEMAINES_DEFAUT,
     Autorisation,
     EtatProjet,
+    FenetreTravaux,
     Phase,
     TypeAutorisation,
     phases_pour_etat,
@@ -58,6 +60,8 @@ def indicateurs(planning: Planning) -> list[tuple[str, str]]:
         lignes.append(("Autorisation d'urbanisme", texte))
     for attente in planning.attentes:
         lignes.append((f"Attente avant « {attente.phase} »", f"{attente.jours / 7:.0f} semaines ({attente.motif})"))
+    if planning.fenetre_travaux is not FenetreTravaux.AUCUNE:
+        lignes.append(("Bâtiment scolaire", planning.fenetre_travaux.value))
     lignes.append(
         (
             "Trêve de fin d'année",
@@ -67,6 +71,37 @@ def indicateurs(planning: Planning) -> list[tuple[str, str]]:
         )
     )
     return lignes
+
+
+def _echapper_ics(texte: str) -> str:
+    return texte.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+
+def planning_vers_ics(planning: Planning, nom_projet: str = "Projet de rénovation") -> bytes:
+    """Jalons du planning au format iCalendar (Outlook, Google Agenda…), en événements d'une journée."""
+    horodatage = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    lignes = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Planificateur renovation//FR",
+        "CALSCALE:GREGORIAN",
+        f"X-WR-CALNAME:{_echapper_ics(nom_projet)}",
+    ]
+    for jalon in planning.jalons:
+        uid = hashlib.sha1(f"{nom_projet}|{jalon.nom}".encode()).hexdigest()
+        lignes += [
+            "BEGIN:VEVENT",
+            f"UID:{uid}@planificateur-renovation",
+            f"DTSTAMP:{horodatage}",
+            f"DTSTART;VALUE=DATE:{jalon.date:%Y%m%d}",
+            f"DTEND;VALUE=DATE:{jalon.date + timedelta(days=1):%Y%m%d}",
+            f"SUMMARY:{_echapper_ics(f'{nom_projet} – {jalon.nom}')}",
+            "DESCRIPTION:Jalon prévisionnel issu du planificateur de rénovation.",
+            "TRANSP:TRANSPARENT",
+            "END:VEVENT",
+        ]
+    lignes.append("END:VCALENDAR")
+    return ("\r\n".join(lignes) + "\r\n").encode("utf-8")
 
 
 def planning_vers_excel(planning: Planning) -> bytes:
@@ -99,6 +134,8 @@ class Scenario:
     treve_semaines: int = TREVE_SEMAINES_DEFAUT
     # Phase après laquelle démarre le montage des dossiers de financement (None : dès le début).
     financement_apres: str | None = FINANCEMENT_APRES_DEFAUT
+    batiment_scolaire: bool = False
+    fenetre_travaux: FenetreTravaux = FenetreTravaux.AUCUNE
 
     def appliquer(self, phases: list[Phase]) -> list[Phase]:
         """Applique les durées personnalisées en respectant les minimums réglementaires."""
@@ -122,6 +159,7 @@ class Scenario:
             self.autorisation,
             self.treve_semaines,
             self.financement_apres,
+            fenetre_travaux=self.fenetre_travaux if self.batiment_scolaire else FenetreTravaux.AUCUNE,
         )
 
     def vers_json(self) -> str:
@@ -140,6 +178,8 @@ class Scenario:
                 },
                 "treve_semaines": self.treve_semaines,
                 "financement_apres": self.financement_apres,
+                "batiment_scolaire": self.batiment_scolaire,
+                "fenetre_travaux": self.fenetre_travaux.name,
             },
             ensure_ascii=False,
             indent=2,
@@ -167,6 +207,8 @@ class Scenario:
                 treve_semaines=int(donnees.get("treve_semaines", TREVE_SEMAINES_DEFAUT)),
                 # Avant cette option, le financement démarrait toujours avec le projet.
                 financement_apres=donnees.get("financement_apres"),
+                batiment_scolaire=bool(donnees.get("batiment_scolaire", False)),
+                fenetre_travaux=FenetreTravaux[donnees.get("fenetre_travaux", "AUCUNE")],
             )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ValueError(f"Fichier de scénario invalide : {exc}") from exc

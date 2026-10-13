@@ -37,6 +37,9 @@ fichier `app.py`.
 - **Recrutement du contrôleur technique et du CSPS** en parallèle du DIAG ; le dépôt du dossier d'autorisation
   l'attend.
 - **Attentes visibles** (en jaune) quand un prérequis n'est pas prêt : autorisation, financement, CT/CSPS.
+- **Bâtiment scolaire** : l'outil demande si le bâtiment est scolaire et propose de caler les travaux sur les
+  vacances d'été (démarrage au début de l'été, ou travaux uniquement l'été, sur plusieurs étés si nécessaire).
+  Il indique alors combien de semaines il faudrait gagner en amont pour démarrer un été plus tôt.
 - **Garantie de parfait achèvement** : un an après la réception, affichée sans allonger la durée du projet.
 - **Autorisation d'urbanisme** (DP, PC, PC d'un ERP, autorisation de travaux ERP) avec son **délai d'instruction
   réglementaire** de droit commun, l'éventuelle majoration pour avis de l'ABF et, en option, la purge du recours
@@ -48,7 +51,8 @@ fichier `app.py`.
   MOE recrutée, dépôt du PC/DP, marchés signés, réception, fin du projet) et une ligne « aujourd'hui ».
 - **Indicateurs** : date de fin, durée totale, part des délais de validation.
 - **Exports** : **PDF A4 paysage prêt à présenter** (Gantt, synthèse, jalons, détail des phases),
-  Excel (feuilles Résumé, Planning, Jalons), CSV (compatible Excel FR) et image du Gantt (icône 📷).
+  Excel (feuilles Résumé, Planning, Jalons), CSV (compatible Excel FR), **jalons au format agenda (.ics)** pour
+  Outlook ou Google Agenda, et image du Gantt (icône 📷).
 - **Scénarios** : enregistrer ses paramètres en JSON et les recharger plus tard.
 - **Glossaire** complet des phases de la loi MOP (y compris VISA et DET), et définitions affichées au survol des barres.
 
@@ -62,7 +66,7 @@ fichier `app.py`.
 | VISA et DET absents du glossaire | Glossaire complet |
 | Pas de bandeau ni de délai MO pour l'AMO | Bandeau AMO et délai de validation |
 | Gantt effacé à chaque modification (bouton) | Gantt recalculé en direct |
-| Tests cassés (modules `config`/`gantt` inexistants) | 84 tests pytest, dont des tests de l'interface (`AppTest`) |
+| Tests cassés (modules `config`/`gantt` inexistants) | 94 tests pytest, dont des tests de l'interface (`AppTest`) |
 | README non à jour | README, CI GitHub Actions (Python 3.11 à 3.14), ruff |
 | Pas d'export ni de date de fin | Excel, CSV, JSON, jalons, indicateurs |
 

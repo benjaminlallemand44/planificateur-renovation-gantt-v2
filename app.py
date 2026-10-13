@@ -12,7 +12,7 @@ import streamlit as st
 
 from renovation_gantt import __version__
 from renovation_gantt.charts import figure_gantt
-from renovation_gantt.export import Scenario, planning_vers_csv, planning_vers_excel
+from renovation_gantt.export import Scenario, planning_vers_csv, planning_vers_excel, planning_vers_ics
 from renovation_gantt.pdf import planning_vers_pdf
 from renovation_gantt.phases import (
     ARTICLES_INSTRUCTION,
@@ -23,6 +23,7 @@ from renovation_gantt.phases import (
     TYPES_MAJORES_ABF,
     Autorisation,
     EtatProjet,
+    FenetreTravaux,
     Groupe,
     TypeAutorisation,
     definition_courte,
@@ -68,6 +69,9 @@ def _charger_scenario() -> None:
     st.session_state["abf"] = scenario.autorisation.abf
     st.session_state["purge_recours"] = scenario.autorisation.purge_recours
     st.session_state["treve_semaines"] = scenario.treve_semaines
+    st.session_state["batiment_scolaire"] = scenario.batiment_scolaire
+    if scenario.fenetre_travaux is not FenetreTravaux.AUCUNE:
+        st.session_state["fenetre_travaux"] = scenario.fenetre_travaux
     st.session_state["afficher_delais"] = any(
         p.delai_mo != d.delai_mo for p, d in zip(scenario.phases(), phases_pour_etat(scenario.etat), strict=True)
     )
@@ -194,6 +198,25 @@ with st.expander("🏛️ Autorisation d'urbanisme et calendrier", expanded=True
             "à confirmer avec le service instructeur (dossier incomplet, consultations…)."
         )
 
+    col_s1, col_s2 = st.columns([1, 2])
+    with col_s1:
+        batiment_scolaire = st.toggle(
+            "🏫 Ce bâtiment est-il un bâtiment scolaire ?",
+            key=_defaut("batiment_scolaire", False),
+            help="École, collège, crèche, gymnase scolaire… Les travaux bruyants se font en général pendant "
+            "les vacances d'été.",
+        )
+    fenetre_travaux = FenetreTravaux.AUCUNE
+    if batiment_scolaire:
+        with col_s2:
+            fenetre_travaux = st.radio(
+                "Organisation des travaux",
+                options=list(FenetreTravaux),
+                format_func=lambda f: f.value,
+                key=_defaut("fenetre_travaux", FenetreTravaux.DEBUT_ETE),
+                help="Vacances d'été retenues : du 6 juillet au 31 août, à ajuster au calendrier de votre zone.",
+            )
+
 phases_defaut = phases_pour_etat(etat)
 durees: dict[str, int] = {}
 delais: dict[str, int] = {}
@@ -235,6 +258,8 @@ scenario = Scenario(
     autorisation=autorisation,
     treve_semaines=treve_semaines,
     financement_apres=financement_apres,
+    batiment_scolaire=batiment_scolaire,
+    fenetre_travaux=fenetre_travaux,
 )
 planning = scenario.planning()
 
@@ -259,6 +284,23 @@ if planning.attentes:
     )
 else:
     m4.metric("Nombre de phases", int((planning.taches["Type"] == "Phase").sum()))
+
+if planning.fenetre_travaux is not FenetreTravaux.AUCUNE:
+    travaux = planning.taches[(planning.taches["Id"] == "DET") & (planning.taches["Type"] == "Phase")]
+    debut_travaux = travaux["Debut"].min()
+    message = f"🏫 Les travaux démarrent le **{debut_travaux:%d/%m/%Y}**"
+    if len(travaux) > 1:
+        message += f" et se répartissent sur **{len(travaux)} étés**"
+    if planning.gain_pour_ete_precedent_jours:
+        attente = next(a for a in planning.attentes if a.motif == "début des vacances d'été")
+        message += (
+            f", après **{attente.jours / 7:.0f} semaines d'attente** de l'été. Pour démarrer un été plus tôt "
+            f"({debut_travaux.year - 1}), il faudrait gagner environ "
+            f"**{planning.gain_pour_ete_precedent_jours / 7:.0f} semaines** sur les phases précédentes."
+        )
+    else:
+        message += "."
+    st.info(message)
 
 st.plotly_chart(figure_gantt(planning, aujourd_hui=date.today()), width="stretch")
 
@@ -299,6 +341,14 @@ with col_export:
         file_name="planning_renovation.csv",
         mime="text/csv",
         width="stretch",
+    )
+    st.download_button(
+        "Jalons dans mon agenda (.ics)",
+        planning_vers_ics(planning),
+        file_name="jalons_renovation.ics",
+        mime="text/calendar",
+        width="stretch",
+        help="À importer dans Outlook ou Google Agenda : un événement par jalon.",
     )
     st.download_button(
         "Scénario (.json)",

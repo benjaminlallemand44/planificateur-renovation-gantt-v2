@@ -43,3 +43,13 @@ def test_autorisation_et_pdf():
     assert not at.exception
     assert at.metric[0].value != fin_dp
     assert at.metric[3].label == "Temps d'attente"
+
+
+def test_batiment_scolaire_et_agenda():
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    at.selectbox(key="etat").set_value(EtatProjet.MOE_SELECTIONNEE).run()
+    fin = at.metric[0].value
+    at.toggle(key="batiment_scolaire").set_value(True).run()
+    assert not at.exception
+    assert any("Les travaux démarrent" in i.value for i in at.info)
+    assert at.metric[0].value != fin
