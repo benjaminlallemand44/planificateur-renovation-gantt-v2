@@ -54,3 +54,38 @@ def test_export_csv(scenario):
     texte = planning_vers_csv(planning).decode("utf-8-sig")
     assert texte.splitlines()[0].startswith("Tâche;Début;Fin")
     assert len(texte.splitlines()) == len(planning.taches) + 1
+
+
+def test_scenario_complet_aller_retour():
+    from renovation_gantt.phases import Autorisation, TypeAutorisation
+
+    sc = Scenario(
+        EtatProjet.MOE_SELECTIONNEE,
+        date(2026, 2, 2),
+        None,
+        autorisation=Autorisation(TypeAutorisation.PC_ERP, abf=True, purge_recours=True),
+        treve_semaines=3,
+    )
+    assert Scenario.depuis_json(sc.vers_json()) == sc
+
+
+def test_ancien_scenario_sans_autorisation_ni_treve():
+    ancien = '{"version": 1, "etat": "SANS_AUDIT", "date_debut": "2026-01-05", "financement_semaines": 6}'
+    sc = Scenario.depuis_json(ancien)
+    assert sc.autorisation.type.name == "DP"
+    assert sc.treve_semaines == 2
+
+
+def test_export_pdf(scenario):
+    from renovation_gantt.pdf import planning_vers_pdf
+
+    contenu = planning_vers_pdf(scenario.planning(), scenario.etat, edition=date(2026, 2, 2))
+    assert contenu.startswith(b"%PDF")
+    assert contenu.count(b"/Type /Page\n") >= 2 or contenu.count(b"/Type /Page") >= 2
+
+
+def test_texte_sans_emoji():
+    from renovation_gantt.pdf import texte_sans_emoji
+
+    assert texte_sans_emoji("👷‍♂️👷‍♀️ AOR - Réception") == "AOR - Réception"
+    assert texte_sans_emoji("🏛️ Instruction PC (3 mois)") == "Instruction PC (3 mois)"

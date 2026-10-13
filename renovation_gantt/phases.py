@@ -57,6 +57,10 @@ class Phase:
     afficher_gantt: bool = True
     icone: str = "📝"
     jalon_fin: str | None = None
+    # L'instruction de l'autorisation d'urbanisme démarre à la fin de cette phase.
+    debut_instruction: bool = False
+    # Cette phase ne peut pas démarrer avant l'obtention de l'autorisation d'urbanisme.
+    attend_autorisation: bool = False
 
     @property
     def libelle(self) -> str:
@@ -115,6 +119,71 @@ DEFINITION_FINANCEMENT = "Recherche et montage des financements (subventions, pr
 
 
 # --------------------------------------------------------------------------
+# Autorisations d'urbanisme et délais d'instruction réglementaires
+
+
+class TypeAutorisation(str, Enum):
+    AUCUNE = "Aucune autorisation d'urbanisme"
+    DP = "Déclaration préalable (DP)"
+    PC = "Permis de construire (PC)"
+    AT_ERP = "Autorisation de travaux ERP (sans permis)"
+    PC_ERP = "Permis de construire d'un ERP"
+
+
+# Délais de droit commun, en mois calendaires.
+MOIS_INSTRUCTION: dict[TypeAutorisation, int] = {
+    TypeAutorisation.AUCUNE: 0,
+    TypeAutorisation.DP: 1,  # C. urb. R423-23 a)
+    TypeAutorisation.PC: 3,  # C. urb. R423-23 c) (hors maison individuelle)
+    TypeAutorisation.AT_ERP: 4,  # CCH, autorisation de travaux au titre des ERP
+    TypeAutorisation.PC_ERP: 5,  # C. urb. R423-28 (PC valant autorisation ERP)
+}
+ARTICLES_INSTRUCTION: dict[TypeAutorisation, str] = {
+    TypeAutorisation.DP: "art. R423-23 du code de l'urbanisme",
+    TypeAutorisation.PC: "art. R423-23 du code de l'urbanisme",
+    TypeAutorisation.AT_ERP: "code de la construction et de l'habitation",
+    TypeAutorisation.PC_ERP: "art. R423-28 du code de l'urbanisme",
+}
+# Majoration d'un mois lorsque l'avis de l'Architecte des Bâtiments de France est requis
+# (abords de monument historique, site patrimonial remarquable) : C. urb. R423-24.
+MAJORATION_ABF_MOIS = 1
+TYPES_MAJORES_ABF = (TypeAutorisation.DP, TypeAutorisation.PC)
+# Recours des tiers : deux mois à compter de l'affichage continu sur le terrain (C. urb. R600-2).
+MOIS_RECOURS_TIERS = 2
+
+
+@dataclass(frozen=True)
+class Autorisation:
+    type: TypeAutorisation = TypeAutorisation.DP
+    abf: bool = False
+    purge_recours: bool = False
+
+    @property
+    def requise(self) -> bool:
+        return self.type is not TypeAutorisation.AUCUNE
+
+    @property
+    def mois_instruction(self) -> int:
+        majoration = MAJORATION_ABF_MOIS if self.abf and self.type in TYPES_MAJORES_ABF else 0
+        return MOIS_INSTRUCTION[self.type] + majoration
+
+    @property
+    def sigle(self) -> str:
+        return {
+            TypeAutorisation.DP: "DP",
+            TypeAutorisation.PC: "PC",
+            TypeAutorisation.AT_ERP: "AT ERP",
+            TypeAutorisation.PC_ERP: "PC ERP",
+        }.get(self.type, "")
+
+
+# --------------------------------------------------------------------------
+# Trêve de fin d'année : période non travaillée, se terminant le 1er janvier inclus.
+
+TREVE_SEMAINES_DEFAUT = 2
+
+
+# --------------------------------------------------------------------------
 # Catalogue des phases
 
 _ETUDES_SANS_AUDIT = [
@@ -164,7 +233,13 @@ _MOE = [
     Phase("APS", "APS - Avant-Projet Sommaire", Groupe.MOE, 4, delai_mo=2, duree_min=3),
     Phase("APD", "APD - Avant-Projet Définitif", Groupe.MOE, 8, delai_mo=3, duree_min=6),
     Phase(
-        "AUTORISATIONS", "Constitution du dossier d'autorisation", Groupe.MOE, 2, delai_mo=2, jalon_fin="Dépôt PC / DP"
+        "AUTORISATIONS",
+        "Constitution du dossier d'autorisation",
+        Groupe.MOE,
+        2,
+        delai_mo=2,
+        jalon_fin="Dépôt du dossier",
+        debut_instruction=True,
     ),
     Phase("PRO", "PRO - Études de Projet", Groupe.MOE, 6, delai_mo=3, duree_min=4),
     Phase("DCE", "DCE - Dossier de Consultation des Entreprises", Groupe.MOE, 6, delai_mo=3),
@@ -176,7 +251,7 @@ _MOE = [
         delai_mo=1,
         jalon_fin="Marchés de travaux signés",
     ),
-    Phase("VISA", "VISA - Visa des études d'exécution", Groupe.MOE, 1),
+    Phase("VISA", "VISA - Visa des études d'exécution", Groupe.MOE, 1, attend_autorisation=True),
     Phase(
         "DET",
         "DET - Direction de l'exécution des travaux",

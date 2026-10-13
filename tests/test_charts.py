@@ -35,3 +35,25 @@ def test_ligne_aujourd_hui():
 def test_planning_vide_leve_une_erreur():
     with pytest.raises(ValueError):
         figure_gantt(calculer_planning([], DEBUT))
+
+
+def test_etiquettes_de_jalons_proches_alternent():
+    from renovation_gantt.charts import etiquettes_a_droite
+    from renovation_gantt.phases import Autorisation, TypeAutorisation
+
+    planning = calculer_planning(
+        phases_pour_etat(EtatProjet.SANS_AUDIT), DEBUT, None, Autorisation(TypeAutorisation.PC_ERP, purge_recours=True)
+    )
+    cotes = etiquettes_a_droite(planning)
+    jalons = planning.jalons
+    assert len(cotes) == len(jalons)
+    assert any(cotes)
+    for i in range(1, len(jalons)):
+        if (jalons[i].date - jalons[i - 1].date).days < 10:
+            assert cotes[i] != cotes[i - 1]
+
+
+def test_bandes_de_treve():
+    planning = calculer_planning(phases_pour_etat(EtatProjet.SANS_AUDIT), DEBUT, treve_semaines=2)
+    fig = figure_gantt(planning)
+    assert "Trêve de fin d'année" in {t.name for t in fig.data}

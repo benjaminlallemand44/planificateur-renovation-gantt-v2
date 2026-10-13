@@ -13,16 +13,21 @@ import streamlit as st
 from renovation_gantt import __version__
 from renovation_gantt.charts import figure_gantt
 from renovation_gantt.export import Scenario, planning_vers_csv, planning_vers_excel
+from renovation_gantt.pdf import planning_vers_pdf
 from renovation_gantt.phases import (
+    ARTICLES_INSTRUCTION,
     GLOSSAIRE_COMPLET,
     LIBELLES_GLOSSAIRE,
+    TREVE_SEMAINES_DEFAUT,
+    TYPES_MAJORES_ABF,
+    Autorisation,
     EtatProjet,
     Groupe,
+    TypeAutorisation,
     definition_courte,
     financement_disponible,
     phases_pour_etat,
 )
-from renovation_gantt.planning import calculer_planning
 
 RACINE = Path(__file__).parent
 LOGO = RACINE / "images" / "Logo_ACTEE_CMYN-HD.png"
@@ -58,6 +63,10 @@ def _charger_scenario() -> None:
     for phase in scenario.phases():
         st.session_state[f"duree_{phase.id}"] = phase.duree
         st.session_state[f"delai_{phase.id}"] = phase.delai_mo
+    st.session_state["type_autorisation"] = scenario.autorisation.type
+    st.session_state["abf"] = scenario.autorisation.abf
+    st.session_state["purge_recours"] = scenario.autorisation.purge_recours
+    st.session_state["treve_semaines"] = scenario.treve_semaines
     st.session_state["afficher_delais"] = any(
         p.delai_mo != d.delai_mo for p, d in zip(scenario.phases(), phases_pour_etat(scenario.etat), strict=True)
     )
@@ -129,6 +138,47 @@ if financement_disponible(etat):
                 key=_defaut("financement_semaines", 6),
             )
 
+with st.expander("🏛️ Autorisation d'urbanisme et calendrier", expanded=True):
+    col_a1, col_a2, col_a3 = st.columns([2, 2, 1])
+    with col_a1:
+        type_autorisation = st.selectbox(
+            "Autorisation d'urbanisme nécessaire",
+            options=list(TypeAutorisation),
+            format_func=lambda t: t.value,
+            key=_defaut("type_autorisation", TypeAutorisation.DP),
+            help="L'instruction se déroule en parallèle des études PRO / DCE. "
+            "Les travaux (VISA, DET) ne démarrent qu'une fois l'autorisation obtenue.",
+        )
+    with col_a2:
+        abf = st.checkbox(
+            "Avis de l'Architecte des Bâtiments de France (+1 mois)",
+            key=_defaut("abf", False),
+            disabled=type_autorisation not in TYPES_MAJORES_ABF,
+            help="Abords d'un monument historique ou site patrimonial remarquable (art. R423-24 du code de l'urbanisme).",
+        )
+        purge_recours = st.checkbox(
+            "Attendre la purge du recours des tiers (+2 mois)",
+            key=_defaut("purge_recours", False),
+            disabled=type_autorisation is TypeAutorisation.AUCUNE,
+            help="Démarrer les travaux après le délai de recours des tiers (art. R600-2 du code de l'urbanisme).",
+        )
+    with col_a3:
+        treve_semaines = st.number_input(
+            "Trêve de fin d'année (sem.)",
+            min_value=0,
+            max_value=4,
+            key=_defaut("treve_semaines", TREVE_SEMAINES_DEFAUT),
+            help="Semaines non travaillées jusqu'au 1er janvier inclus. Les phases qui la traversent sont "
+            "prolongées d'autant ; les délais réglementaires, eux, continuent de courir.",
+        )
+    autorisation = Autorisation(type_autorisation, abf=abf, purge_recours=purge_recours)
+    if autorisation.requise:
+        st.caption(
+            f"Délai d'instruction retenu : **{autorisation.mois_instruction} mois** "
+            f"({ARTICLES_INSTRUCTION[type_autorisation]}). Délai indicatif de droit commun, "
+            "à confirmer avec le service instructeur (dossier incomplet, consultations…)."
+        )
+
 phases_defaut = phases_pour_etat(etat)
 durees: dict[str, int] = {}
 delais: dict[str, int] = {}
@@ -162,9 +212,15 @@ for groupe in [g for g in ICONES_GROUPES if any(p.groupe is g for p in phases_de
                     )
 
 scenario = Scenario(
-    etat=etat, date_debut=date_debut, financement_semaines=financement_semaines, durees=durees, delais_mo=delais
+    etat=etat,
+    date_debut=date_debut,
+    financement_semaines=financement_semaines,
+    durees=durees,
+    delais_mo=delais,
+    autorisation=autorisation,
+    treve_semaines=treve_semaines,
 )
-planning = calculer_planning(scenario.phases(), date_debut, financement_semaines)
+planning = scenario.planning()
 
 
 # --------------------------------------------------------------------------
@@ -173,9 +229,20 @@ planning = calculer_planning(scenario.phases(), date_debut, financement_semaines
 st.divider()
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Date de fin estimée", planning.date_fin.strftime("%d/%m/%Y"))
-m2.metric("Durée totale", f"{planning.duree_totale_mois:.1f} mois ({planning.duree_totale_semaines:.0f} sem.)")
+m2.metric(
+    "Durée totale",
+    f"{planning.duree_totale_mois:.1f} mois".replace(".", ","),
+    help=f"{planning.duree_totale_semaines:.0f} semaines",
+)
 m3.metric("Dont validations MO", f"{planning.semaines_delai_mo():.0f} semaines")
-m4.metric("Nombre de phases", int((planning.taches["Type"] == "Phase").sum()))
+if planning.attente_autorisation_jours:
+    m4.metric(
+        "Attente de l'autorisation",
+        f"{planning.attente_autorisation_jours / 7:.0f} semaines",
+        help="Les marchés de travaux sont prêts avant l'obtention de l'autorisation : les travaux attendent.",
+    )
+else:
+    m4.metric("Nombre de phases", int((planning.taches["Type"] == "Phase").sum()))
 
 st.plotly_chart(figure_gantt(planning, aujourd_hui=date.today()), width="stretch")
 
@@ -194,6 +261,15 @@ with col_jalons:
     )
 with col_export:
     st.subheader("⬇️ Exporter")
+    st.download_button(
+        "Planning PDF (à présenter)",
+        lambda: planning_vers_pdf(planning, etat, LOGO),
+        file_name="planning_renovation.pdf",
+        mime="application/pdf",
+        on_click="ignore",
+        type="primary",
+        width="stretch",
+    )
     st.download_button(
         "Planning Excel (.xlsx)",
         planning_vers_excel(planning),

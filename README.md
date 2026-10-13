@@ -33,11 +33,17 @@ fichier `app.py`.
 - **Durées modifiables** (en semaines), avec les minimums réglementaires (APS ≥ 3, APD ≥ 6, PRO ≥ 4).
 - **Délais de validation du maître d'ouvrage** affichés en orange, et modifiables (option de la barre latérale).
 - **Recherche de financement** en parallèle des études.
+- **Autorisation d'urbanisme** (DP, PC, PC d'un ERP, autorisation de travaux ERP) avec son **délai d'instruction
+  réglementaire** de droit commun, l'éventuelle majoration pour avis de l'ABF et, en option, la purge du recours
+  des tiers. L'instruction se déroule en parallèle des études PRO / DCE ; les travaux attendent l'autorisation, et
+  l'attente éventuelle est chiffrée.
+- **Trêve de fin d'année** (2 semaines par défaut, jusqu'au 1er janvier) : les phases qui la traversent sont
+  prolongées d'autant, tandis que les délais réglementaires continuent de courir.
 - **Gantt mis à jour en direct** avec un bandeau par catégorie, les jalons clés (décision des élus,
   MOE recrutée, dépôt du PC/DP, marchés signés, réception, fin du projet) et une ligne « aujourd'hui ».
 - **Indicateurs** : date de fin, durée totale, part des délais de validation.
-- **Exports** : planning Excel (feuilles Résumé, Planning, Jalons), CSV (compatible Excel FR) et image
-  du Gantt (icône 📷).
+- **Exports** : **PDF A4 paysage prêt à présenter** (Gantt, synthèse, jalons, détail des phases),
+  Excel (feuilles Résumé, Planning, Jalons), CSV (compatible Excel FR) et image du Gantt (icône 📷).
 - **Scénarios** : enregistrer ses paramètres en JSON et les recharger plus tard.
 - **Glossaire** complet des phases de la loi MOP (y compris VISA et DET), et définitions affichées au survol des barres.
 
@@ -51,7 +57,7 @@ fichier `app.py`.
 | VISA et DET absents du glossaire | Glossaire complet |
 | Pas de bandeau ni de délai MO pour l'AMO | Bandeau AMO et délai de validation |
 | Gantt effacé à chaque modification (bouton) | Gantt recalculé en direct |
-| Tests cassés (modules `config`/`gantt` inexistants) | 51 tests pytest, dont des tests de l'interface (`AppTest`) |
+| Tests cassés (modules `config`/`gantt` inexistants) | 75 tests pytest, dont des tests de l'interface (`AppTest`) |
 | README non à jour | README, CI GitHub Actions (Python 3.11 à 3.14), ruff |
 | Pas d'export ni de date de fin | Excel, CSV, JSON, jalons, indicateurs |
 
@@ -63,13 +69,27 @@ renovation_gantt/
 ├── phases.py               États, phases, durées par défaut, glossaire
 ├── planning.py             Calcul des dates et des jalons (sans Streamlit)
 ├── charts.py               Diagramme de Gantt Plotly
-└── export.py               Excel / CSV / scénarios JSON
+├── export.py               Excel / CSV / scénarios JSON
+└── pdf.py                  Export PDF (Gantt matplotlib + mise en page fpdf2)
 tests/                      Tests pytest
 images/                     Logo ACTEE
 ```
 
 Pour modifier une durée par défaut ou ajouter une phase, il suffit d'éditer
 `renovation_gantt/phases.py` : l'interface, le Gantt et les exports suivent automatiquement.
+
+## Délais réglementaires retenus
+
+| Autorisation | Délai d'instruction | Référence |
+|---|---|---|
+| Déclaration préalable | 1 mois (+1 mois avec avis ABF) | C. urb. R423-23, R423-24 |
+| Permis de construire | 3 mois (+1 mois avec avis ABF) | C. urb. R423-23, R423-24 |
+| Autorisation de travaux ERP | 4 mois | Code de la construction et de l'habitation |
+| Permis de construire d'un ERP | 5 mois | C. urb. R423-28 |
+| Recours des tiers (option) | 2 mois après affichage | C. urb. R600-2 |
+
+Ce sont des délais de droit commun : un dossier incomplet ou des consultations supplémentaires peuvent les
+allonger. Ils se modifient dans `renovation_gantt/phases.py`.
 
 ## Licence
 

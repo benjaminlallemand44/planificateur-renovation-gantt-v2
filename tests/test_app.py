@@ -30,3 +30,16 @@ def test_modifier_une_duree_decale_la_fin():
     at.number_input(key="duree_DET").set_value(30).run()
     assert not at.exception
     assert at.metric[1].value != fin_avant
+
+
+def test_autorisation_et_pdf():
+    from renovation_gantt.phases import TypeAutorisation
+
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    at.selectbox(key="etat").set_value(EtatProjet.MOE_SELECTIONNEE).run()
+    fin_dp = at.metric[0].value
+    at.selectbox(key="type_autorisation").set_value(TypeAutorisation.PC_ERP).run()
+    at.checkbox(key="purge_recours").check().run()
+    assert not at.exception
+    assert at.metric[0].value != fin_dp
+    assert at.metric[3].label == "Attente de l'autorisation"

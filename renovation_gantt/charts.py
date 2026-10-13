@@ -9,9 +9,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from .phases import COULEURS_GROUPES, Groupe
-from .planning import TYPE_DELAI_MO, TYPE_FINANCEMENT, TYPE_PHASE, Planning
+from .planning import TYPE_DELAI_MO, TYPE_FINANCEMENT, TYPE_INSTRUCTION, TYPE_PHASE, TYPE_RECOURS, Planning
 
-COULEURS_TYPES = {TYPE_PHASE: "#0915a6", TYPE_DELAI_MO: "#ff5300", TYPE_FINANCEMENT: "#2e9e44"}
+COULEURS_TYPES = {
+    TYPE_PHASE: "#0915a6",
+    TYPE_DELAI_MO: "#ff5300",
+    TYPE_FINANCEMENT: "#2e9e44",
+    TYPE_INSTRUCTION: "#7b2cbf",
+    TYPE_RECOURS: "#c3a6e8",
+}
+COULEUR_TREVE = "#e6e6e6"
 
 
 def figure_gantt(planning: Planning, aujourd_hui: date | None = None) -> go.Figure:
@@ -52,19 +59,39 @@ def figure_gantt(planning: Planning, aujourd_hui: date | None = None) -> go.Figu
     fig.update_yaxes(title=None, tickfont=dict(size=12))
     fig.update_xaxes(showgrid=True, gridcolor="lightgrey", title=None, tickfont=dict(size=13))
 
+    _ajouter_treve(fig, planning)
     _ajouter_bandeaux(fig, df)
     _ajouter_jalons(fig, planning)
     if aujourd_hui and planning.date_debut <= aujourd_hui <= planning.date_fin:
         _ligne_verticale(fig, aujourd_hui, "Aujourd'hui", "#888888", "dot")
 
     fig.update_layout(
-        height=max(450, 32 * len(ordre_taches) + 220),
+        height=max(560, 32 * len(ordre_taches) + 220),
         margin=dict(l=20, r=20, t=110, b=40),
         plot_bgcolor="white",
         legend=dict(orientation="h", yanchor="top", y=-0.06, x=0, title=None),
         title=dict(text="📅 Diagramme de Gantt du projet", font=dict(size=18, color="#0915a6")),
     )
     return fig
+
+
+def _ajouter_treve(fig: go.Figure, planning: Planning) -> None:
+    for debut, fin in planning.periodes_treve:
+        fig.add_vrect(
+            x0=pd.Timestamp(debut), x1=pd.Timestamp(fin), fillcolor=COULEUR_TREVE, line_width=0, layer="below"
+        )
+    if planning.periodes_treve:
+        # Entrée de légende pour expliquer les bandes grises.
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="markers",
+                marker=dict(symbol="square", size=14, color=COULEUR_TREVE, line=dict(color="#999999", width=1)),
+                name="Trêve de fin d'année",
+                hoverinfo="skip",
+            )
+        )
 
 
 def _ajouter_bandeaux(fig: go.Figure, df: pd.DataFrame) -> None:
@@ -97,13 +124,27 @@ def _ajouter_bandeaux(fig: go.Figure, df: pd.DataFrame) -> None:
         )
 
 
-def _ajouter_jalons(fig: go.Figure, planning: Planning) -> None:
+def etiquettes_a_droite(planning: Planning) -> list[bool]:
+    """Pour chaque jalon, indique si son étiquette doit passer à droite de sa ligne.
+
+    Par défaut l'étiquette est à gauche ; on la bascule à droite quand le jalon précédent
+    est trop proche, pour éviter que les deux textes se superposent."""
+    ecart_min = max(10, (planning.date_fin - planning.date_debut).days * 0.015)
+    resultat, precedent = [], None
     for jalon in planning.jalons:
+        a_droite = precedent is not None and (jalon.date - precedent).days < ecart_min and not resultat[-1]
+        resultat.append(a_droite)
+        precedent = jalon.date
+    return resultat
+
+
+def _ajouter_jalons(fig: go.Figure, planning: Planning) -> None:
+    for jalon, a_droite in zip(planning.jalons, etiquettes_a_droite(planning), strict=True):
         couleur = "#c00000" if jalon.nom == "Fin du projet" else "#444444"
-        _ligne_verticale(fig, jalon.date, f"◆ {jalon.nom}", couleur, "dash")
+        _ligne_verticale(fig, jalon.date, f"◆ {jalon.nom}", couleur, "dash", a_droite)
 
 
-def _ligne_verticale(fig: go.Figure, jour: date, texte: str, couleur: str, style: str) -> None:
+def _ligne_verticale(fig: go.Figure, jour: date, texte: str, couleur: str, style: str, a_droite: bool = False) -> None:
     x = pd.Timestamp(jour)
     fig.add_shape(
         type="line", xref="x", yref="paper", x0=x, x1=x, y0=0, y1=1, line=dict(color=couleur, width=1, dash=style)
@@ -116,7 +157,7 @@ def _ligne_verticale(fig: go.Figure, jour: date, texte: str, couleur: str, style
         text=texte,
         showarrow=False,
         textangle=-90,
-        xanchor="right",
+        xanchor="left" if a_droite else "right",
         yanchor="top",
         font=dict(size=10, color=couleur),
     )
