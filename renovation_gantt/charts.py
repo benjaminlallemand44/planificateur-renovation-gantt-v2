@@ -9,7 +9,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from .phases import COULEURS_GROUPES, Groupe
-from .planning import TYPE_DELAI_MO, TYPE_FINANCEMENT, TYPE_INSTRUCTION, TYPE_PHASE, TYPE_RECOURS, Planning
+from .planning import (
+    TYPE_ATTENTE,
+    TYPE_DELAI_MO,
+    TYPE_FINANCEMENT,
+    TYPE_GPA,
+    TYPE_INSTRUCTION,
+    TYPE_PHASE,
+    TYPE_RECOURS,
+    Planning,
+)
 
 COULEURS_TYPES = {
     TYPE_PHASE: "#0915a6",
@@ -17,6 +26,8 @@ COULEURS_TYPES = {
     TYPE_FINANCEMENT: "#2e9e44",
     TYPE_INSTRUCTION: "#7b2cbf",
     TYPE_RECOURS: "#c3a6e8",
+    TYPE_ATTENTE: "#f6d55c",
+    TYPE_GPA: "#b8dcc6",
 }
 COULEUR_TREVE = "#e6e6e6"
 
@@ -62,7 +73,7 @@ def figure_gantt(planning: Planning, aujourd_hui: date | None = None) -> go.Figu
     _ajouter_treve(fig, planning)
     _ajouter_bandeaux(fig, df)
     _ajouter_jalons(fig, planning)
-    if aujourd_hui and planning.date_debut <= aujourd_hui <= planning.date_fin:
+    if aujourd_hui and planning.date_debut <= aujourd_hui <= planning.date_fin_affichage:
         _ligne_verticale(fig, aujourd_hui, "Aujourd'hui", "#888888", "dot")
 
     fig.update_layout(
@@ -94,12 +105,33 @@ def _ajouter_treve(fig: go.Figure, planning: Planning) -> None:
         )
 
 
+ABREVIATIONS_GROUPES = {
+    Groupe.ETUDES: "Études",
+    Groupe.AMO: "AMO",
+    Groupe.SELECTION_MOE: "Sél. MOE",
+    Groupe.MOE: "MOE",
+    Groupe.FINANCEMENT: "Financ.",
+}
+
+
+def libelle_bandeau(groupe: Groupe, fraction: float, largeur_caractere: float = 0.0075) -> str:
+    """Libellé du bandeau d'une catégorie, abrégé (ou omis) si le bandeau est trop étroit.
+
+    ``fraction`` : largeur du bandeau rapportée à la durée totale affichée."""
+    for texte in (groupe.value, ABREVIATIONS_GROUPES[groupe]):
+        if fraction >= len(texte) * largeur_caractere:
+            return texte
+    return ""
+
+
 def _ajouter_bandeaux(fig: go.Figure, df: pd.DataFrame) -> None:
+    etendue = df["Fin"].max() - df["Debut"].min()
     for groupe in Groupe:
         sous_df = df[df["Groupe"] == groupe.value]
         if sous_df.empty:
             continue
         debut, fin = sous_df["Debut"].min(), sous_df["Fin"].max()
+        texte = libelle_bandeau(groupe, (fin - debut) / etendue)
         y0, y1 = (1.10, 1.16) if groupe is Groupe.FINANCEMENT else (1.02, 1.08)
         fig.add_shape(
             type="rect",
@@ -118,7 +150,8 @@ def _ajouter_bandeaux(fig: go.Figure, df: pd.DataFrame) -> None:
             y=(y0 + y1) / 2,
             xref="x",
             yref="paper",
-            text=f"<b>{groupe.value}</b>",
+            text=f"<b>{texte}</b>" if texte else "",
+            hovertext=groupe.value,
             showarrow=False,
             font=dict(size=11, color="black"),
         )

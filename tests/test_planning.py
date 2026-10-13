@@ -60,11 +60,12 @@ def test_financement_plus_long_que_le_projet_repousse_la_fin():
 def test_jalons():
     p = calculer_planning(phases_pour_etat(EtatProjet.SANS_AUDIT), DEBUT)
     noms = [j.nom for j in p.jalons]
-    assert noms[-1] == "Fin du projet"
+    assert noms[-1] == "Fin de la GPA"
+    assert "Fin du projet" in noms
     assert "MOE recrutée" in noms and "Réception des travaux" in noms
     dates = [j.date for j in p.jalons]
     assert dates == sorted(dates)
-    assert p.jalons[-1].date == p.date_fin
+    assert next(j for j in p.jalons if j.nom == "Fin du projet").date == p.date_fin
 
 
 @pytest.mark.parametrize("etat", list(EtatProjet))

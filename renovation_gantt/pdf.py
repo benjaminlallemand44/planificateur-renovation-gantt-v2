@@ -22,7 +22,7 @@ from fpdf.fonts import FontFace  # noqa: E402
 from matplotlib.patches import Patch, Rectangle  # noqa: E402
 from matplotlib.transforms import blended_transform_factory  # noqa: E402
 
-from .charts import COULEUR_TREVE, COULEURS_TYPES, etiquettes_a_droite  # noqa: E402
+from .charts import COULEUR_TREVE, COULEURS_TYPES, etiquettes_a_droite, libelle_bandeau  # noqa: E402
 from .export import indicateurs  # noqa: E402
 from .phases import COULEURS_GROUPES, EtatProjet, Groupe  # noqa: E402
 from .planning import Planning  # noqa: E402
@@ -155,7 +155,7 @@ def _gantt_png(planning: Planning) -> io.BytesIO:
 
     fig, ax = plt.subplots(figsize=(11.2, 6.7), dpi=200)
     debut_axe = planning.date_debut - timedelta(days=7)
-    fin_axe = planning.date_fin + timedelta(days=7)
+    fin_axe = planning.date_fin_affichage + timedelta(days=7)
 
     for debut, fin in planning.periodes_treve:
         ax.axvspan(debut, fin, color=COULEUR_TREVE, zorder=0, lw=0)
@@ -173,11 +173,13 @@ def _gantt_png(planning: Planning) -> io.BytesIO:
         )
 
     trans = blended_transform_factory(ax.transData, ax.transAxes)
+    debut_axe_num, fin_axe_num = mdates.date2num(debut_axe), mdates.date2num(fin_axe)
     for groupe in Groupe:
         sous_df = df[df["Groupe"] == groupe.value]
         if sous_df.empty:
             continue
         debut, fin = mdates.date2num(sous_df["Debut"].min()), mdates.date2num(sous_df["Fin"].max())
+        texte = libelle_bandeau(groupe, (fin - debut) / (fin_axe_num - debut_axe_num))
         y0 = 1.075 if groupe is Groupe.FINANCEMENT else 1.01
         ax.add_patch(
             Rectangle(
@@ -193,7 +195,7 @@ def _gantt_png(planning: Planning) -> io.BytesIO:
         ax.text(
             debut + (fin - debut) / 2,
             y0 + 0.0275,
-            groupe.value,
+            texte,
             transform=trans,
             ha="center",
             va="center",
@@ -251,7 +253,7 @@ def _gantt_png(planning: Planning) -> io.BytesIO:
 
 
 def _mois_graduations(planning: Planning) -> list[int]:
-    mois = (planning.date_fin - planning.date_debut).days / 30.4
+    mois = (planning.date_fin_affichage - planning.date_debut).days / 30.4
     pas = 1 if mois <= 14 else 2 if mois <= 30 else 3
     return list(range(1, 13, pas))
 

@@ -42,4 +42,4 @@ def test_autorisation_et_pdf():
     at.checkbox(key="purge_recours").check().run()
     assert not at.exception
     assert at.metric[0].value != fin_dp
-    assert at.metric[3].label == "Attente de l'autorisation"
+    assert at.metric[3].label == "Temps d'attente"

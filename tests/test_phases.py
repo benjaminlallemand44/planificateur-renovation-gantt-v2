@@ -6,7 +6,6 @@ from renovation_gantt.phases import (
     LIBELLES_GLOSSAIRE,
     EtatProjet,
     Groupe,
-    financement_disponible,
     phases_pour_etat,
 )
 
@@ -50,10 +49,8 @@ def test_recrutement_moe():
     assert phases_pour_etat(EtatProjet.RECRUTEMENT_MOE)[0].groupe is Groupe.SELECTION_MOE
 
 
-def test_moe_selectionnee_commence_par_diag_sans_financement():
-    assert ids(EtatProjet.MOE_SELECTIONNEE)[0] == "DIAG"
-    assert not financement_disponible(EtatProjet.MOE_SELECTIONNEE)
-    assert financement_disponible(EtatProjet.SANS_AUDIT)
+def test_moe_selectionnee_commence_par_le_recrutement_ct_csps_et_le_diag():
+    assert ids(EtatProjet.MOE_SELECTIONNEE)[:2] == ["CT_CSPS", "DIAG"]
 
 
 def test_etat_accepte_la_chaine_de_caracteres():

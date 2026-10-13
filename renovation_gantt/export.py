@@ -9,7 +9,15 @@ from datetime import date
 
 import pandas as pd
 
-from .phases import TREVE_SEMAINES_DEFAUT, Autorisation, EtatProjet, Phase, TypeAutorisation, phases_pour_etat
+from .phases import (
+    FINANCEMENT_APRES_DEFAUT,
+    TREVE_SEMAINES_DEFAUT,
+    Autorisation,
+    EtatProjet,
+    Phase,
+    TypeAutorisation,
+    phases_pour_etat,
+)
 from .planning import Planning, calculer_planning
 
 VERSION_SCENARIO = 1
@@ -48,10 +56,8 @@ def indicateurs(planning: Planning) -> list[tuple[str, str]]:
             if a.purge_recours:
                 texte += ", purge du recours des tiers"
         lignes.append(("Autorisation d'urbanisme", texte))
-    if planning.attente_autorisation_jours:
-        lignes.append(
-            ("Attente de l'autorisation avant travaux", f"{planning.attente_autorisation_jours / 7:.0f} semaines")
-        )
+    for attente in planning.attentes:
+        lignes.append((f"Attente avant « {attente.phase} »", f"{attente.jours / 7:.0f} semaines ({attente.motif})"))
     lignes.append(
         (
             "Trêve de fin d'année",
@@ -91,6 +97,8 @@ class Scenario:
     delais_mo: dict[str, int] = field(default_factory=dict)
     autorisation: Autorisation = field(default_factory=Autorisation)
     treve_semaines: int = TREVE_SEMAINES_DEFAUT
+    # Phase après laquelle démarre le montage des dossiers de financement (None : dès le début).
+    financement_apres: str | None = FINANCEMENT_APRES_DEFAUT
 
     def appliquer(self, phases: list[Phase]) -> list[Phase]:
         """Applique les durées personnalisées en respectant les minimums réglementaires."""
@@ -108,7 +116,12 @@ class Scenario:
 
     def planning(self) -> Planning:
         return calculer_planning(
-            self.phases(), self.date_debut, self.financement_semaines, self.autorisation, self.treve_semaines
+            self.phases(),
+            self.date_debut,
+            self.financement_semaines,
+            self.autorisation,
+            self.treve_semaines,
+            self.financement_apres,
         )
 
     def vers_json(self) -> str:
@@ -126,6 +139,7 @@ class Scenario:
                     "purge_recours": self.autorisation.purge_recours,
                 },
                 "treve_semaines": self.treve_semaines,
+                "financement_apres": self.financement_apres,
             },
             ensure_ascii=False,
             indent=2,
@@ -151,6 +165,8 @@ class Scenario:
                     purge_recours=bool(autorisation.get("purge_recours", False)),
                 ),
                 treve_semaines=int(donnees.get("treve_semaines", TREVE_SEMAINES_DEFAUT)),
+                # Avant cette option, le financement démarrait toujours avec le projet.
+                financement_apres=donnees.get("financement_apres"),
             )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ValueError(f"Fichier de scénario invalide : {exc}") from exc

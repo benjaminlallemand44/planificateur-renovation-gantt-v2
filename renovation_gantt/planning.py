@@ -3,14 +3,19 @@
 Les phases s'enchaînent : chaque phase démarre à la fin de la précédente
 (délai de validation du maître d'ouvrage inclus). En parallèle :
 
-- la recherche de financement, à partir de la date de début ;
+- les phases marquées ``parallele`` (recrutement du contrôleur technique et du CSPS) ;
+- le montage des dossiers de financement, au démarrage ou après une phase donnée
+  (par défaut l'APD, quand le coût prévisionnel est connu) ;
 - l'instruction de l'autorisation d'urbanisme, à partir du dépôt du dossier,
   pendant que la maîtrise d'œuvre poursuit ses études (PRO, DCE, ACT).
-  Les travaux (VISA puis DET) ne démarrent qu'une fois l'autorisation obtenue.
+
+Les prérequis créent des attentes, affichées sur le Gantt : les travaux attendent
+l'autorisation, la signature des marchés de travaux attend le dossier de financement
+complet, le dépôt du dossier d'autorisation attend le contrôleur technique et le CSPS.
 
 Les durées des phases sont des semaines travaillées : la trêve de fin d'année
 les prolonge d'autant. Les délais réglementaires (instruction, recours des
-tiers) courent en mois calendaires, trêve comprise.
+tiers, garantie de parfait achèvement) courent en mois calendaires.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ import pandas as pd
 from .phases import (
     ARTICLES_INSTRUCTION,
     DEFINITION_FINANCEMENT,
+    DEFINITION_GPA,
     MOIS_RECOURS_TIERS,
     Autorisation,
     Groupe,
@@ -36,6 +42,18 @@ TYPE_DELAI_MO = "Délai MO"
 TYPE_FINANCEMENT = "Financement"
 TYPE_INSTRUCTION = "Instruction réglementaire"
 TYPE_RECOURS = "Recours des tiers"
+TYPE_ATTENTE = "Attente"
+TYPE_GPA = "Garantie de parfait achèvement"
+
+# La réception des travaux a lieu à la fin de cette phase ; la GPA court ensuite un an.
+ID_RECEPTION = "DET"
+MOIS_GPA = 12
+
+MOTIFS_ATTENTE = {
+    "AUTORISATION": "autorisation d'urbanisme",
+    "FINANCEMENT": "dossier de financement complet",
+    "CT_CSPS": "recrutement du CT et du CSPS",
+}
 
 COLONNES = ["Id", "Tache", "Debut", "Fin", "Type", "Groupe", "Definition", "Semaines"]
 
@@ -47,14 +65,28 @@ class Jalon:
 
 
 @dataclass(frozen=True)
+class Attente:
+    """Temps mort imposé par un prérequis non encore satisfait."""
+
+    motif: str
+    phase: str
+    debut: date
+    fin: date
+
+    @property
+    def jours(self) -> int:
+        return (self.fin - self.debut).days
+
+
+@dataclass(frozen=True)
 class Planning:
     taches: pd.DataFrame
     jalons: list[Jalon]
     date_debut: date
+    # Fin du projet (fin de l'AOR) ; la garantie de parfait achèvement court au-delà.
     date_fin: date
     periodes_treve: list[tuple[date, date]] = field(default_factory=list)
-    # Nombre de jours pendant lesquels les travaux attendent l'autorisation d'urbanisme.
-    attente_autorisation_jours: int = 0
+    attentes: list[Attente] = field(default_factory=list)
     autorisation: Autorisation | None = None
     treve_semaines: int = 0
 
@@ -65,6 +97,19 @@ class Planning:
     @property
     def duree_totale_mois(self) -> float:
         return (self.date_fin - self.date_debut).days / 30.4375
+
+    @property
+    def date_fin_affichage(self) -> date:
+        """Dernière date à afficher (GPA comprise)."""
+        return max([self.date_fin, *self.taches["Fin"]]) if not self.taches.empty else self.date_fin
+
+    @property
+    def attente_totale_jours(self) -> int:
+        return sum(a.jours for a in self.attentes)
+
+    @property
+    def attente_autorisation_jours(self) -> int:
+        return sum(a.jours for a in self.attentes if a.motif == MOTIFS_ATTENTE["AUTORISATION"])
 
     def semaines_par_groupe(self) -> dict[str, float]:
         df = self.taches[self.taches["Type"].isin([TYPE_PHASE, TYPE_DELAI_MO])]
@@ -80,12 +125,17 @@ def calculer_planning(
     financement_semaines: int | None = None,
     autorisation: Autorisation | None = None,
     treve_semaines: int = 0,
+    financement_apres: str | None = None,
+    gpa: bool = True,
 ) -> Planning:
     """Calcule les dates de chaque phase.
 
-    ``financement_semaines`` à ``None`` (ou 0) désactive la recherche de financement.
+    ``financement_semaines`` à ``None`` (ou 0) désactive le financement.
+    ``financement_apres`` : identifiant de la phase après laquelle démarre le financement
+    (``None`` ou phase absente : dès la date de début).
     ``autorisation`` à ``None`` désactive la modélisation de l'instruction réglementaire.
     ``treve_semaines`` : nombre de semaines non travaillées se terminant le 1er janvier (0 = aucune).
+    ``gpa`` : affiche la garantie de parfait achèvement après la réception.
     """
     if isinstance(date_debut, pd.Timestamp):
         date_debut = date_debut.date()
@@ -93,13 +143,16 @@ def calculer_planning(
 
     lignes: list[dict] = []
     jalons: list[Jalon] = []
+    attentes: list[Attente] = []
+    fins: dict[str, date] = {}
+    ligne_gpa: tuple[dict, ...] = ()
 
-    if financement_semaines:
-        debut, fin = _etaler(date_debut, financement_semaines, ferme)
+    def ajouter_financement(depart: date) -> None:
+        debut, fin = _etaler(depart, financement_semaines, ferme)
         lignes.append(
             _ligne(
                 "FINANCEMENT",
-                "💶 Recherche de financement",
+                "💶 Dossiers de financement",
                 debut,
                 fin,
                 TYPE_FINANCEMENT,
@@ -108,20 +161,44 @@ def calculer_planning(
                 financement_semaines,
             )
         )
+        jalons.append(Jalon("Financement : dossier complet", fin))
+        fins["FINANCEMENT"] = fin
+
+    def attendre(prerequis: tuple[str, ...], depuis: date, phase: Phase) -> date:
+        bloquants = [p for p in prerequis if p in fins and fins[p] > depuis]
+        if not bloquants:
+            return depuis
+        cle = max(bloquants, key=lambda p: fins[p])
+        jusqu_a = fins[cle]
+        motif = MOTIFS_ATTENTE.get(cle, cle)
+        attentes.append(Attente(motif, phase.nom, depuis, jusqu_a))
+        lignes.append(
+            _ligne(
+                f"ATTENTE_{phase.id}",
+                f"⏳ Attente : {motif}",
+                depuis,
+                jusqu_a,
+                TYPE_ATTENTE,
+                phase.groupe,
+                f"« {phase.nom} » attend : {motif}.",
+                (jusqu_a - depuis).days / 7,
+            )
+        )
+        return jusqu_a
+
+    ids_affiches = {p.id for p in phases if p.afficher_gantt}
+    if financement_semaines and financement_apres not in ids_affiches:
+        ajouter_financement(date_debut)
 
     courant = date_debut
-    fin_autorisation: date | None = None
-    attente = 0
     for phase in phases:
         if not phase.afficher_gantt:
             continue
         if phase.debut_instruction and autorisation is not None and not autorisation.requise:
             continue
-        if phase.attend_autorisation and fin_autorisation and fin_autorisation > courant:
-            attente = (fin_autorisation - courant).days
-            courant = fin_autorisation
 
-        debut, fin_phase = _etaler(courant, phase.duree, ferme)
+        depart = attendre(phase.prerequis, courant, phase)
+        debut, fin_phase = _etaler(depart, phase.duree, ferme)
         if phase.duree > 0:
             lignes.append(
                 _ligne(
@@ -135,9 +212,9 @@ def calculer_planning(
                     phase.duree,
                 )
             )
-        fin = fin_phase
+        fin = attendre(phase.prerequis_signature, fin_phase, phase)
         if phase.delai_mo > 0:
-            debut_delai, fin = _etaler(fin_phase, phase.delai_mo, ferme)
+            debut_delai, fin = _etaler(fin, phase.delai_mo, ferme)
             lignes.append(
                 _ligne(
                     phase.id,
@@ -152,12 +229,35 @@ def calculer_planning(
             )
         if phase.jalon_fin:
             jalons.append(Jalon(phase.jalon_fin, fin))
-        if phase.debut_instruction and autorisation is not None and autorisation.requise:
-            fin_autorisation = _instruction(fin, autorisation, lignes, jalons)
-        courant = fin
+        fins[phase.id] = fin
 
+        if phase.debut_instruction and autorisation is not None and autorisation.requise:
+            fins["AUTORISATION"] = _instruction(fin, autorisation, lignes, jalons)
+        if financement_semaines and phase.id == financement_apres:
+            ajouter_financement(fin)
+        if gpa and phase.id == ID_RECEPTION:
+            fin_gpa = _ajouter_mois(fin, MOIS_GPA)
+            ligne_gpa = (
+                _ligne(
+                    "GPA",
+                    f"🛡️ Garantie de parfait achèvement ({MOIS_GPA} mois)",
+                    fin,
+                    fin_gpa,
+                    TYPE_GPA,
+                    Groupe.MOE,
+                    DEFINITION_GPA,
+                    (fin_gpa - fin).days / 7,
+                ),
+            )
+            jalons.append(Jalon("Fin de la GPA", fin_gpa))
+        if not phase.parallele:
+            courant = fin
+
+    # La GPA est affichée en dernière ligne, après l'AOR.
+    lignes.extend(ligne_gpa)
     taches = pd.DataFrame(lignes, columns=COLONNES)
-    date_fin = max([courant, *taches["Fin"]]) if not taches.empty else courant
+    hors_gpa = taches.loc[taches["Type"] != TYPE_GPA, "Fin"]
+    date_fin = max([courant, *hors_gpa])
     jalons.append(Jalon("Fin du projet", date_fin))
     jalons.sort(key=lambda j: j.date)
     return Planning(
@@ -165,8 +265,8 @@ def calculer_planning(
         jalons=jalons,
         date_debut=date_debut,
         date_fin=date_fin,
-        periodes_treve=periodes_treve(date_debut, date_fin, treve_semaines),
-        attente_autorisation_jours=attente,
+        periodes_treve=periodes_treve(date_debut, max([date_fin, *taches["Fin"]]), treve_semaines),
+        attentes=attentes,
         autorisation=autorisation,
         treve_semaines=treve_semaines,
     )

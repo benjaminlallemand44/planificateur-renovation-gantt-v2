@@ -16,6 +16,7 @@ from renovation_gantt.export import Scenario, planning_vers_csv, planning_vers_e
 from renovation_gantt.pdf import planning_vers_pdf
 from renovation_gantt.phases import (
     ARTICLES_INSTRUCTION,
+    FINANCEMENT_APRES_DEFAUT,
     GLOSSAIRE_COMPLET,
     LIBELLES_GLOSSAIRE,
     TREVE_SEMAINES_DEFAUT,
@@ -25,7 +26,6 @@ from renovation_gantt.phases import (
     Groupe,
     TypeAutorisation,
     definition_courte,
-    financement_disponible,
     phases_pour_etat,
 )
 
@@ -60,6 +60,7 @@ def _charger_scenario() -> None:
     st.session_state["financement_on"] = bool(scenario.financement_semaines)
     if scenario.financement_semaines:
         st.session_state["financement_semaines"] = scenario.financement_semaines
+    st.session_state["financement_apres"] = scenario.financement_apres
     for phase in scenario.phases():
         st.session_state[f"duree_{phase.id}"] = phase.duree
         st.session_state[f"delai_{phase.id}"] = phase.delai_mo
@@ -124,19 +125,33 @@ if etat is None:
 # --------------------------------------------------------------------------
 # Saisie des durées
 
+DEMARRAGES_FINANCEMENT = {
+    FINANCEMENT_APRES_DEFAUT: "Après validation de l'APD (coût prévisionnel connu)",
+    None: "Dès le début du projet",
+}
 financement_semaines = None
-if financement_disponible(etat):
-    col_f1, col_f2 = st.columns([1, 3])
-    with col_f1:
-        avec_financement = st.toggle("💶 Recherche de financement", key=_defaut("financement_on", True))
+financement_apres = st.session_state.get("financement_apres", FINANCEMENT_APRES_DEFAUT)
+col_f1, col_f2, col_f3 = st.columns([1, 2, 2])
+with col_f1:
+    avec_financement = st.toggle("💶 Financement", key=_defaut("financement_on", True))
+if avec_financement:
     with col_f2:
-        if avec_financement:
-            financement_semaines = st.number_input(
-                "Durée de la recherche de financement (semaines, en parallèle des études)",
-                min_value=1,
-                max_value=104,
-                key=_defaut("financement_semaines", 6),
-            )
+        financement_apres = st.selectbox(
+            "Montage des dossiers de subvention",
+            options=list(DEMARRAGES_FINANCEMENT),
+            format_func=DEMARRAGES_FINANCEMENT.get,
+            key=_defaut("financement_apres", FINANCEMENT_APRES_DEFAUT),
+        )
+    with col_f3:
+        financement_semaines = st.number_input(
+            "Durée jusqu'à l'accusé de dossier complet (sem.)",
+            min_value=1,
+            max_value=104,
+            key=_defaut("financement_semaines", 12),
+            help="Montage et dépôt des dossiers (DETR, DSIL, Fonds vert…), puis délai pour que le dossier soit "
+            "déclaré complet (réputé complet après 2 mois sans réponse). Les marchés de travaux ne seront pas "
+            "signés avant : la signature vaut commencement d'exécution.",
+        )
 
 with st.expander("🏛️ Autorisation d'urbanisme et calendrier", expanded=True):
     col_a1, col_a2, col_a3 = st.columns([2, 2, 1])
@@ -219,6 +234,7 @@ scenario = Scenario(
     delais_mo=delais,
     autorisation=autorisation,
     treve_semaines=treve_semaines,
+    financement_apres=financement_apres,
 )
 planning = scenario.planning()
 
@@ -235,11 +251,11 @@ m2.metric(
     help=f"{planning.duree_totale_semaines:.0f} semaines",
 )
 m3.metric("Dont validations MO", f"{planning.semaines_delai_mo():.0f} semaines")
-if planning.attente_autorisation_jours:
+if planning.attentes:
     m4.metric(
-        "Attente de l'autorisation",
-        f"{planning.attente_autorisation_jours / 7:.0f} semaines",
-        help="Les marchés de travaux sont prêts avant l'obtention de l'autorisation : les travaux attendent.",
+        "Temps d'attente",
+        f"{planning.attente_totale_jours / 7:.0f} semaines",
+        help="\n".join(f"- {a.phase} attend : {a.motif} ({a.jours / 7:.0f} sem.)" for a in planning.attentes),
     )
 else:
     m4.metric("Nombre de phases", int((planning.taches["Type"] == "Phase").sum()))
