@@ -2,7 +2,7 @@
 name = "renovation-gantt"
 version = "2.0.0"
 description = "Planificateur de projet de rénovation énergétique (diagramme de Gantt, loi MOP)"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 
 [tool.pytest.ini_options]
@@ -11,7 +11,7 @@ pythonpath = ["."]
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]

@@ -52,7 +52,7 @@ fichier `app.py`.
 | Pas de bandeau ni de délai MO pour l'AMO | Bandeau AMO et délai de validation |
 | Gantt effacé à chaque modification (bouton) | Gantt recalculé en direct |
 | Tests cassés (modules `config`/`gantt` inexistants) | 51 tests pytest, dont des tests de l'interface (`AppTest`) |
-| README non à jour | README, CI GitHub Actions (Python 3.11 à 3.13), ruff |
+| README non à jour | README, CI GitHub Actions (Python 3.11 à 3.14), ruff |
 | Pas d'export ni de date de fin | Excel, CSV, JSON, jalons, indicateurs |
 
 ## Structure

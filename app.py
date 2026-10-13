@@ -70,7 +70,7 @@ def _charger_scenario() -> None:
 
 with st.sidebar:
     if LOGO.exists():
-        st.image(str(LOGO), use_column_width=True)
+        st.image(str(LOGO), width="stretch")
     st.header("💾 Scénario")
     st.file_uploader("Charger un scénario (.json)", type="json", key="fichier_scenario", on_change=_charger_scenario)
     if st.session_state.get("erreur_scenario"):
@@ -177,7 +177,7 @@ m2.metric("Durée totale", f"{planning.duree_totale_mois:.1f} mois ({planning.du
 m3.metric("Dont validations MO", f"{planning.semaines_delai_mo():.0f} semaines")
 m4.metric("Nombre de phases", int((planning.taches["Type"] == "Phase").sum()))
 
-st.plotly_chart(figure_gantt(planning, aujourd_hui=date.today()), use_container_width=True)
+st.plotly_chart(figure_gantt(planning, aujourd_hui=date.today()), width="stretch")
 
 st.warning(
     "Vigilance (DET / AOR) : les durées de travaux et de réception sont indicatives et "
@@ -190,7 +190,7 @@ with col_jalons:
     st.dataframe(
         [{"Jalon": j.nom, "Date": j.date.strftime("%d/%m/%Y")} for j in planning.jalons],
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
 with col_export:
     st.subheader("⬇️ Exporter")
@@ -198,7 +198,7 @@ with col_export:
         "Planning Excel (.xlsx)",
         planning_vers_excel(planning),
         file_name="planning_renovation.xlsx",
-        use_container_width=True,
+        width="stretch",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     st.download_button(
@@ -206,14 +206,14 @@ with col_export:
         planning_vers_csv(planning),
         file_name="planning_renovation.csv",
         mime="text/csv",
-        use_container_width=True,
+        width="stretch",
     )
     st.download_button(
         "Scénario (.json)",
         scenario.vers_json(),
         file_name="scenario_renovation.json",
         mime="application/json",
-        use_container_width=True,
+        width="stretch",
         help="À recharger plus tard depuis la barre latérale.",
     )
     st.caption("Le Gantt peut aussi être enregistré en image via l'icône 📷 du graphique.")
