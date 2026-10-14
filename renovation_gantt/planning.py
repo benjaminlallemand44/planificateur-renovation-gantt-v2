@@ -26,7 +26,6 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from .avancement import Avancement, Statut
 from .phases import (
     ARTICLES_INSTRUCTION,
     DEFINITION_FINANCEMENT,
@@ -49,7 +48,6 @@ TYPE_INSTRUCTION = "Instruction réglementaire"
 TYPE_RECOURS = "Recours des tiers"
 TYPE_ATTENTE = "Attente"
 TYPE_GPA = "Garantie de parfait achèvement"
-TYPE_REALISE = "Réalisé"
 
 # Phase des travaux : la réception a lieu à sa fin, la GPA court ensuite un an,
 # et c'est elle que contraint la fenêtre de travaux des bâtiments scolaires.
@@ -101,10 +99,6 @@ class Planning:
     fenetre_travaux: FenetreTravaux = FenetreTravaux.AUCUNE
     # Si les travaux attendent l'été : jours à gagner en amont pour démarrer un été plus tôt.
     gain_pour_ete_precedent_jours: int = 0
-    # Suivi : avancement saisi, date du jour retenue et éléments en cours qui dépassent leur durée prévue.
-    avancement: dict[str, Avancement] = field(default_factory=dict)
-    aujourd_hui: date | None = None
-    depassements: list[str] = field(default_factory=list)
 
     @property
     def duree_totale_semaines(self) -> float:
@@ -144,8 +138,6 @@ def calculer_planning(
     financement_apres: str | None = None,
     gpa: bool = True,
     fenetre_travaux: FenetreTravaux = FenetreTravaux.AUCUNE,
-    avancement: dict[str, Avancement] | None = None,
-    aujourd_hui: date | None = None,
 ) -> Planning:
     """Calcule les dates de chaque phase.
 
@@ -156,9 +148,6 @@ def calculer_planning(
     ``treve_semaines`` : nombre de semaines non travaillées se terminant le 1er janvier (0 = aucune).
     ``gpa`` : affiche la garantie de parfait achèvement après la réception.
     ``fenetre_travaux`` : contrainte des vacances d'été pour les bâtiments scolaires.
-    ``avancement`` : dates réelles saisies (suivi). Les éléments terminés ou en cours sont placés à leurs
-    dates réelles ; avec ``aujourd_hui``, les éléments à venir ne démarrent pas dans le passé et ceux en
-    cours ne se terminent pas avant aujourd'hui.
     """
     if isinstance(date_debut, pd.Timestamp):
         date_debut = date_debut.date()
@@ -170,54 +159,19 @@ def calculer_planning(
     fins: dict[str, date] = {}
     gain_ete = 0
     ligne_gpa: tuple[dict, ...] = ()
-    avancement = avancement or {}
-    depassements: list[str] = []
-
-    def au_plus_tot(jour: date) -> date:
-        return max(jour, aujourd_hui) if aujourd_hui else jour
-
-    def reel(id_: str, nom: str, depart: date, fin_prevue: Callable[[date], date]) -> tuple[date, date, Statut] | None:
-        """Dates d'un élément terminé ou en cours, ou None s'il est à venir."""
-        av = avancement.get(id_)
-        if av is None or av.statut is Statut.A_VENIR:
-            return None
-        debut = av.debut or depart
-        fin = av.fin or fin_prevue(debut)
-        if av.statut is Statut.TERMINEE and not av.fin and aujourd_hui and fin > aujourd_hui:
-            # Terminée sans date de fin saisie : elle s'est achevée au plus tard aujourd'hui.
-            fin = aujourd_hui
-            debut = min(debut, fin)
-        if av.statut is Statut.EN_COURS and aujourd_hui and fin < aujourd_hui:
-            depassements.append(nom)
-            fin = aujourd_hui
-        return debut, max(fin, debut), av.statut
-
-    def definition_reelle(id_: str, statut: Statut, definition: str) -> str:
-        texte = "Réalisé." if statut is Statut.TERMINEE else f"En cours. {definition}"
-        commentaire = avancement[id_].commentaire
-        return f"{texte} {commentaire}".strip() if commentaire else texte
 
     def ajouter_financement(depart: date) -> None:
-        etat = reel(
-            "FINANCEMENT", "Dossiers de financement", depart, lambda d: _etaler(d, financement_semaines, ferme)[1]
-        )
-        if etat is None:
-            debut, fin = _etaler(au_plus_tot(depart), financement_semaines, ferme)
-            type_, definition = TYPE_FINANCEMENT, DEFINITION_FINANCEMENT
-        else:
-            debut, fin, statut = etat
-            type_ = TYPE_REALISE if statut is Statut.TERMINEE else TYPE_FINANCEMENT
-            definition = definition_reelle("FINANCEMENT", statut, DEFINITION_FINANCEMENT)
+        debut, fin = _etaler(depart, financement_semaines, ferme)
         lignes.append(
             _ligne(
                 "FINANCEMENT",
                 "💶 Dossiers de financement",
                 debut,
                 fin,
-                type_,
+                TYPE_FINANCEMENT,
                 Groupe.FINANCEMENT,
-                definition,
-                (fin - debut).days / 7 if etat else financement_semaines,
+                DEFINITION_FINANCEMENT,
+                financement_semaines,
             )
         )
         jalons.append(Jalon("Financement : dossier complet", fin))
@@ -249,10 +203,14 @@ def calculer_planning(
     if financement_semaines and financement_apres not in ids_affiches:
         ajouter_financement(date_debut)
 
-    def _planifier(phase: Phase, depart: date) -> date:
-        """Place une phase à venir (prérequis, été, durée, validation) ; renvoie sa fin."""
-        nonlocal gain_ete
-        depart = attendre(phase.prerequis, depart, phase)
+    courant = date_debut
+    for phase in phases:
+        if not phase.afficher_gantt:
+            continue
+        if phase.debut_instruction and autorisation is not None and not autorisation.requise:
+            continue
+
+        depart = attendre(phase.prerequis, courant, phase)
         contrainte_ete = phase.id == ID_TRAVAUX and fenetre_travaux is not FenetreTravaux.AUCUNE
         if contrainte_ete:
             fins["ETE"] = prochain_ete(depart)
@@ -294,43 +252,12 @@ def calculer_planning(
                     phase.delai_mo,
                 )
             )
-        return fin
-
-    courant = date_debut
-    for phase in phases:
-        if not phase.afficher_gantt:
-            continue
-        if phase.debut_instruction and autorisation is not None and not autorisation.requise:
-            continue
-
-        etat = reel(
-            phase.id,
-            phase.nom,
-            courant,
-            lambda d, phase=phase: _etaler(d, phase.duree + phase.delai_mo, ferme)[1],
-        )
-        if etat is not None:
-            debut, fin, statut = etat
-            lignes.append(
-                _ligne(
-                    phase.id,
-                    phase.libelle,
-                    debut,
-                    fin,
-                    TYPE_REALISE if statut is Statut.TERMINEE else TYPE_PHASE,
-                    phase.groupe,
-                    definition_reelle(phase.id, statut, definition_courte(phase)),
-                    (fin - debut).days / 7,
-                )
-            )
-        else:
-            fin = _planifier(phase, au_plus_tot(courant))
         if phase.jalon_fin:
             jalons.append(Jalon(phase.jalon_fin, fin))
         fins[phase.id] = fin
 
         if phase.debut_instruction and autorisation is not None and autorisation.requise:
-            fins["AUTORISATION"] = _instruction(fin, autorisation, lignes, jalons, reel, definition_reelle)
+            fins["AUTORISATION"] = _instruction(fin, autorisation, lignes, jalons)
         if financement_semaines and phase.id == financement_apres:
             ajouter_financement(fin)
         if gpa and phase.id == ID_RECEPTION:
@@ -369,47 +296,27 @@ def calculer_planning(
         treve_semaines=treve_semaines,
         fenetre_travaux=fenetre_travaux,
         gain_pour_ete_precedent_jours=gain_ete,
-        avancement=avancement,
-        aujourd_hui=aujourd_hui,
-        depassements=depassements,
     )
 
 
-def _instruction(
-    depot: date,
-    autorisation: Autorisation,
-    lignes: list[dict],
-    jalons: list[Jalon],
-    reel: Callable[..., tuple[date, date, Statut] | None],
-    definition_reelle: Callable[[str, Statut, str], str],
-) -> date:
+def _instruction(depot: date, autorisation: Autorisation, lignes: list[dict], jalons: list[Jalon]) -> date:
     """Ajoute l'instruction (et la purge du recours des tiers) ; renvoie la date à partir de laquelle
     les travaux peuvent démarrer."""
     mois = autorisation.mois_instruction
+    obtention = _ajouter_mois(depot, mois)
     detail = f"Délai d'instruction de droit commun : {mois} mois ({ARTICLES_INSTRUCTION[autorisation.type]})"
     if autorisation.abf and mois > 0:
         detail += ", majoré pour avis de l'Architecte des Bâtiments de France"
-    detail += ". Délai indicatif, à confirmer avec le service instructeur."
-    type_ = TYPE_INSTRUCTION
-    etat = reel("INSTRUCTION", "Instruction de l'autorisation", depot, lambda d: _ajouter_mois(d, mois))
-    if etat is None:
-        # L'instruction court à compter du dépôt, même si celui-ci est en retard.
-        debut, obtention = depot, _ajouter_mois(depot, mois)
-    else:
-        debut, obtention, statut = etat
-        detail = definition_reelle("INSTRUCTION", statut, detail)
-        if statut is Statut.TERMINEE:
-            type_ = TYPE_REALISE
     lignes.append(
         _ligne(
             "INSTRUCTION",
             f"🏛️ Instruction {autorisation.sigle} ({mois} mois)",
-            debut,
+            depot,
             obtention,
-            type_,
+            TYPE_INSTRUCTION,
             Groupe.MOE,
-            detail,
-            (obtention - debut).days / 7,
+            detail + ". Délai indicatif, à confirmer avec le service instructeur.",
+            (obtention - depot).days / 7,
         )
     )
     jalons.append(Jalon("Autorisation obtenue", obtention))

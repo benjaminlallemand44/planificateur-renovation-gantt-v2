@@ -22,16 +22,14 @@ from fpdf.fonts import FontFace  # noqa: E402
 from matplotlib.patches import Patch, Rectangle  # noqa: E402
 from matplotlib.transforms import blended_transform_factory  # noqa: E402
 
-from .avancement import Avancement, Statut  # noqa: E402
 from .charts import COULEUR_TREVE, COULEURS_TYPES, etiquettes_a_droite, libelle_bandeau  # noqa: E402
 from .export import indicateurs  # noqa: E402
 from .phases import COULEURS_GROUPES, EtatProjet, Groupe  # noqa: E402
 from .planning import Planning  # noqa: E402
-from .suivi import Reference, ecart_fin_jours, elements_suivis, meteo, points_attention, prochains_jalons  # noqa: E402
 
 BLEU = (9, 21, 166)
 MOIS_FR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
-_EMOJIS = re.compile("[\U0001f000-\U0001faff\u2600-\u27bf\u2b00-\u2bff\ufe0f\u200d]")
+_EMOJIS = re.compile("[\U0001f000-\U0001faff☀-➿⬀-⯿️‍]")
 
 
 def texte_sans_emoji(texte: str) -> str:
@@ -43,16 +41,21 @@ def planning_vers_pdf(
     etat: EtatProjet | None = None,
     logo: Path | None = None,
     edition: date | None = None,
+    nom_projet: str = "",
 ) -> bytes:
     if planning.taches.empty:
         raise ValueError("Le planning ne contient aucune tâche à exporter.")
     edition = edition or date.today()
 
-    pdf = _document()
+    pdf = _Document(orientation="L", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=14)
+    polices = Path(matplotlib.get_data_path()) / "fonts" / "ttf"
+    pdf.add_font("DejaVu", "", polices / "DejaVuSans.ttf")
+    pdf.add_font("DejaVu", "B", polices / "DejaVuSans-Bold.ttf")
 
     # Page 1 : en-tête et diagramme de Gantt
     pdf.add_page()
-    _entete(pdf, etat, logo, edition)
+    _entete(pdf, etat, logo, edition, nom_projet)
     image = _gantt_png(planning)
     pdf.image(image, x=10, y=pdf.get_y() + 2, w=pdf.epw)
 
@@ -84,126 +87,6 @@ def planning_vers_pdf(
     return bytes(pdf.output())
 
 
-COULEURS_METEO = {"vert": (46, 158, 68), "orange": (230, 140, 20), "rouge": (200, 30, 30), "gris": (130, 130, 130)}
-
-
-def point_avancement_pdf(
-    planning: Planning,
-    reference: Reference | None,
-    aujourd_hui: date,
-    nom_projet: str = "",
-    logo: Path | None = None,
-) -> bytes:
-    """Point d'avancement synthétique pour les élus : météo, chiffres clés, prochaines étapes,
-    points d'attention (page 1) et Gantt actualisé (page 2)."""
-    if planning.taches.empty:
-        raise ValueError("Le planning ne contient aucune tâche à exporter.")
-    pdf = _document()
-    pdf.add_page()
-
-    # En-tête
-    x_texte = 10
-    if logo is not None and Path(logo).exists():
-        pdf.image(str(logo), x=10, y=8, h=14)
-        x_texte = 75
-    pdf.set_xy(x_texte, 8)
-    pdf.set_font("DejaVu", "B", 16)
-    pdf.set_text_color(*BLEU)
-    pdf.cell(0, 8, "Point d'avancement")
-    pdf.set_xy(x_texte, 17)
-    pdf.set_font("DejaVu", "", 10)
-    pdf.set_text_color(60, 60, 60)
-    pdf.cell(0, 5, f"{nom_projet or 'Projet de rénovation énergétique'}  —  situation au {aujourd_hui:%d/%m/%Y}")
-
-    # Météo
-    ecart = ecart_fin_jours(planning, reference)
-    niveau, libelle = meteo(ecart)
-    pdf.set_fill_color(*COULEURS_METEO[niveau])
-    pdf.rect(10, 30, pdf.epw, 14, style="F", round_corners=True, corner_radius=3)
-    pdf.set_xy(14, 33)
-    pdf.set_font("DejaVu", "B", 14)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(0, 8, libelle)
-
-    # Chiffres clés
-    elements = elements_suivis(planning)
-    statuts = [planning.avancement.get(i, Avancement()).statut for i, _ in elements]
-    terminees = sum(s is Statut.TERMINEE for s in statuts)
-    en_cours = [texte_sans_emoji(n) for (i, n), s in zip(elements, statuts, strict=True) if s is Statut.EN_COURS]
-    chiffres = [
-        ("Fin du projet prévue", f"{planning.date_fin:%d/%m/%Y}"),
-        (
-            "Écart avec la référence",
-            "—" if ecart is None else ("à l'heure" if abs(ecart) < 7 else f"{ecart / 7:+.0f} semaines"),
-        ),
-        ("Étapes terminées", f"{terminees} / {len(elements)}"),
-    ]
-    largeur = (pdf.epw - 10) / 3
-    for k, (titre, valeur) in enumerate(chiffres):
-        x = 10 + k * (largeur + 5)
-        pdf.set_fill_color(240, 242, 250)
-        pdf.rect(x, 49, largeur, 22, style="F", round_corners=True, corner_radius=2)
-        pdf.set_xy(x + 4, 51)
-        pdf.set_font("DejaVu", "", 9)
-        pdf.set_text_color(90, 90, 90)
-        pdf.cell(largeur - 8, 5, titre)
-        pdf.set_xy(x + 4, 58)
-        pdf.set_font("DejaVu", "B", 15)
-        pdf.set_text_color(*BLEU)
-        pdf.cell(largeur - 8, 9, valeur)
-    if reference is not None:
-        pdf.set_xy(10, 73)
-        pdf.set_font("DejaVu", "", 8)
-        pdf.set_text_color(110, 110, 110)
-        pdf.cell(0, 4, f"Référence : « {reference.nom} », fin prévue le {reference.date_fin:%d/%m/%Y}.")
-
-    # Prochaines étapes et points d'attention, sur deux colonnes
-    y0 = 80
-    colonne = (pdf.epw - 8) / 2
-    pdf.set_xy(10, y0)
-    _titre_section(pdf, "Où en est-on ?")
-    pdf.set_font("DejaVu", "", 10)
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_x(10)
-    pdf.multi_cell(colonne, 5.5, "En cours : " + (", ".join(en_cours) if en_cours else "aucune étape en cours."))
-    pdf.ln(2)
-    pdf.set_x(10)
-    _titre_section(pdf, "Prochaines étapes")
-    pdf.set_font("DejaVu", "", 10)
-    pdf.set_text_color(0, 0, 0)
-    for jalon in prochains_jalons(planning, aujourd_hui):
-        pdf.set_x(10)
-        pdf.multi_cell(colonne, 5.5, f"•  {jalon.date:%d/%m/%Y}  —  {jalon.nom}")
-
-    x_droite = 10 + colonne + 8
-    pdf.set_xy(x_droite, y0)
-    pdf.set_font("DejaVu", "B", 11)
-    pdf.set_text_color(*BLEU)
-    pdf.cell(colonne, 7, "Points d'attention", new_x="LEFT", new_y="NEXT")
-    pdf.set_font("DejaVu", "", 10)
-    pdf.set_text_color(0, 0, 0)
-    points = points_attention(planning, reference, aujourd_hui)[:7] or ["Aucun point d'attention particulier."]
-    for point in points:
-        pdf.set_x(x_droite)
-        pdf.multi_cell(colonne, 5.5, f"•  {point}")
-        pdf.ln(1)
-
-    # Page 2 : Gantt actualisé
-    pdf.add_page()
-    _titre_section(pdf, "Planning actualisé")
-    pdf.image(_gantt_png(planning), x=10, y=pdf.get_y() + 1, w=pdf.epw)
-    return bytes(pdf.output())
-
-
-def _document() -> _Document:
-    pdf = _Document(orientation="L", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=14)
-    polices = Path(matplotlib.get_data_path()) / "fonts" / "ttf"
-    pdf.add_font("DejaVu", "", polices / "DejaVuSans.ttf")
-    pdf.add_font("DejaVu", "B", polices / "DejaVuSans-Bold.ttf")
-    return pdf
-
-
 class _Document(FPDF):
     def footer(self) -> None:
         self.set_y(-11)
@@ -218,7 +101,7 @@ class _Document(FPDF):
         )
 
 
-def _entete(pdf: FPDF, etat: EtatProjet | None, logo: Path | None, edition: date) -> None:
+def _entete(pdf: FPDF, etat: EtatProjet | None, logo: Path | None, edition: date, nom_projet: str = "") -> None:
     x_texte = 10
     if logo is not None and Path(logo).exists():
         pdf.image(str(logo), x=10, y=8, h=14)
@@ -230,10 +113,11 @@ def _entete(pdf: FPDF, etat: EtatProjet | None, logo: Path | None, edition: date
     pdf.set_xy(x_texte, 16)
     pdf.set_font("DejaVu", "", 9)
     pdf.set_text_color(60, 60, 60)
-    sous_titre = f"Édité le {edition.strftime('%d/%m/%Y')}"
+    parties = [nom_projet] if nom_projet else []
     if etat is not None:
-        sous_titre = f"Situation de départ : {EtatProjet(etat).value}  —  {sous_titre}"
-    pdf.multi_cell(0, 4.5, sous_titre)
+        parties.append(f"Situation de départ : {EtatProjet(etat).value}")
+    parties.append(f"Édité le {edition:%d/%m/%Y}")
+    pdf.multi_cell(0, 4.5, "  —  ".join(parties))
     pdf.set_y(max(pdf.get_y(), 24))
 
 

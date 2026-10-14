@@ -53,21 +53,23 @@ fichier `app.py`.
 - **Exports** : **PDF A4 paysage prêt à présenter** (Gantt, synthèse, jalons, détail des phases),
   Excel (feuilles Résumé, Planning, Jalons), CSV (compatible Excel FR), **jalons au format agenda (.ics)** pour
   Outlook ou Google Agenda, et image du Gantt (icône 📷).
-- **Scénarios** : enregistrer ses paramètres (et le suivi) en JSON et les recharger plus tard.
-
-### Onglet « Suivi de l'avancement »
-
-- **Saisie de l'avancement** de chaque étape (à venir / en cours / terminée, dates réelles, commentaire),
-  y compris les dossiers de financement et l'instruction de l'autorisation.
-- **Planning recalculé** à partir du réel : les étapes à venir ne démarrent pas dans le passé, une étape en
-  cours qui dépasse sa durée est signalée.
-- **Plannings de référence** figés (par exemple à chaque délibération) : écarts par étape et sur la date de fin,
-  contours pointillés de la référence sur le Gantt.
-- **Météo du projet** (dans les temps / glissement / glissement important), **points d'attention** et
-  **prochaines étapes**.
-- **Point d'avancement pour les élus** : PDF synthétique (météo, chiffres clés, prochaines étapes, points
-  d'attention, Gantt actualisé).
+- **Scénarios** : enregistrer ses paramètres (planning et budget) en JSON et les recharger plus tard.
 - **Glossaire** complet des phases de la loi MOP (y compris VISA et DET), et définitions affichées au survol des barres.
+
+### Onglet « Budget et financement »
+
+- **Coût de l'opération** à partir du montant estimé des travaux : honoraires de maîtrise d'œuvre, AMO, contrôle
+  technique, CSPS, assurance dommages-ouvrage, frais divers, aléas, actualisation (taux et forfaits modifiables),
+  en HT, TVA et TTC.
+- **Plan de financement** : financeurs (DETR, DSIL, Fonds vert, Région, Département, CEE… et toute autre ligne),
+  en taux ou en montant, avec leur statut ; **contrôle du plafond de 80 % d'aides publiques** (participation
+  minimale de 20 % du maître d'ouvrage, CGCT art. L1111-10) ; **FCTVA** attendu et **reste à charge net**.
+- **Calendrier des demandes d'aide** issu du planning (dépôt après l'APD, dossier complet avant la signature des
+  marchés de travaux).
+- **Échéancier budgétaire** par année (autorisation de programme et crédits de paiement) : dépenses calées sur le
+  Gantt, aides (acompte au démarrage des travaux, solde après la réception), FCTVA selon le régime N, N+1 ou N+2,
+  solde cumulé et **besoin de financement maximal**.
+- **Export Excel** (synthèse, coût, plan de financement, échéancier) ; le budget est enregistré dans le scénario JSON.
 
 ## Ce qui change par rapport à la v1
 
@@ -79,7 +81,7 @@ fichier `app.py`.
 | VISA et DET absents du glossaire | Glossaire complet |
 | Pas de bandeau ni de délai MO pour l'AMO | Bandeau AMO et délai de validation |
 | Gantt effacé à chaque modification (bouton) | Gantt recalculé en direct |
-| Tests cassés (modules `config`/`gantt` inexistants) | 113 tests pytest, dont des tests de l'interface (`AppTest`) |
+| Tests cassés (modules `config`/`gantt` inexistants) | 109 tests pytest, dont des tests de l'interface (`AppTest`) |
 | README non à jour | README, CI GitHub Actions (Python 3.11 à 3.14), ruff |
 | Pas d'export ni de date de fin | Excel, CSV, JSON, jalons, indicateurs |
 
@@ -91,8 +93,7 @@ renovation_gantt/
 ├── phases.py               États, phases, durées par défaut, glossaire
 ├── planning.py             Calcul des dates et des jalons (sans Streamlit)
 ├── charts.py               Diagramme de Gantt Plotly
-├── avancement.py           Avancement réel saisi (statut, dates, commentaire)
-├── suivi.py                Plannings de référence, écarts, météo, points d'attention
+├── budget.py               Coût de l'opération, plan de financement, FCTVA, échéancier
 ├── export.py               Excel / CSV / agenda .ics / scénarios JSON
 └── pdf.py                  Export PDF (Gantt matplotlib + mise en page fpdf2)
 tests/                      Tests pytest

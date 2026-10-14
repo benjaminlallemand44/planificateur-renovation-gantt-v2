@@ -10,13 +10,25 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from renovation_gantt import __version__
-from renovation_gantt.avancement import Avancement, Statut
+from renovation_gantt.budget import (
+    PLAFOND_AIDES_PUBLIQUES,
+    POSTES,
+    TAUX_FCTVA_DEFAUT,
+    Budget,
+    Financeur,
+    Mode,
+    RegimeFCTVA,
+    StatutAide,
+    budget_vers_excel,
+    postes_par_defaut,
+)
 from renovation_gantt.charts import figure_gantt
 from renovation_gantt.export import Scenario, planning_vers_csv, planning_vers_excel, planning_vers_ics
-from renovation_gantt.pdf import planning_vers_pdf, point_avancement_pdf
+from renovation_gantt.pdf import planning_vers_pdf
 from renovation_gantt.phases import (
     ARTICLES_INSTRUCTION,
     FINANCEMENT_APRES_DEFAUT,
@@ -32,21 +44,10 @@ from renovation_gantt.phases import (
     definition_courte,
     phases_pour_etat,
 )
-from renovation_gantt.suivi import (
-    Reference,
-    comparer,
-    ecart_fin_jours,
-    elements_suivis,
-    meteo,
-    points_attention,
-    prochains_jalons,
-)
 
 RACINE = Path(__file__).parent
 LOGO = RACINE / "images" / "Logo_ACTEE_CMYN-HD.png"
 ICONES_GROUPES = {Groupe.ETUDES: "📋", Groupe.AMO: "🧠", Groupe.SELECTION_MOE: "🧑‍💼", Groupe.MOE: "🏗️"}
-ICONES_METEO = {"vert": "🟢", "orange": "🟠", "rouge": "🔴", "gris": "⚪"}
-AUJOURD_HUI = date.today()
 
 st.set_page_config(page_title="Planificateur rénovation", page_icon="📊", layout="wide")
 
@@ -73,6 +74,15 @@ def _charger_scenario() -> None:
     st.session_state["etat"] = scenario.etat
     st.session_state["date_debut"] = scenario.date_debut
     st.session_state["nom_projet"] = scenario.nom_projet
+    budget = scenario.budget
+    st.session_state["travaux_ht"] = int(budget.travaux_ht)
+    for id_poste, valeur in budget.postes.items():
+        st.session_state[f"poste_{id_poste}"] = float(valeur)
+    st.session_state["taux_fctva"] = budget.taux_fctva
+    st.session_state["regime_fctva"] = budget.regime_fctva
+    st.session_state["acompte_aides"] = budget.acompte_aides
+    st.session_state["financeurs"] = budget.financeurs
+    st.session_state.pop("editeur_financeurs", None)
     st.session_state["financement_on"] = bool(scenario.financement_semaines)
     if scenario.financement_semaines:
         st.session_state["financement_semaines"] = scenario.financement_semaines
@@ -90,9 +100,6 @@ def _charger_scenario() -> None:
     st.session_state["afficher_delais"] = any(
         p.delai_mo != d.delai_mo for p, d in zip(scenario.phases(), phases_pour_etat(scenario.etat), strict=True)
     )
-    st.session_state["avancement"] = scenario.avancement
-    st.session_state["references"] = scenario.references
-    st.session_state.pop("editeur_avancement", None)
     st.session_state["erreur_scenario"] = None
     st.session_state["scenario_charge"] = fichier.name
 
@@ -143,19 +150,18 @@ with col_etat:
         key="etat",
     )
 with col_date:
-    date_debut = st.date_input("📅 Date de début", format="DD/MM/YYYY", key=_defaut("date_debut", AUJOURD_HUI))
+    date_debut = st.date_input("📅 Date de début", format="DD/MM/YYYY", key=_defaut("date_debut", date.today()))
 
 if etat is None:
     st.info("Sélectionnez l'état de votre projet pour afficher les étapes.")
     st.stop()
 
-onglet_plan, onglet_suivi = st.tabs(["📅 Planification", "📍 Suivi de l'avancement"])
-
-
-# --------------------------------------------------------------------------
-# Onglet Planification : paramètres
+onglet_plan, onglet_budget = st.tabs(["📅 Planification", "💶 Budget et financement"])
 
 with onglet_plan:
+    # --------------------------------------------------------------------------
+    # Saisie des durées
+
     DEMARRAGES_FINANCEMENT = {
         FINANCEMENT_APRES_DEFAUT: "Après validation de l'APD (coût prévisionnel connu)",
         None: "Dès le début du projet",
@@ -200,8 +206,7 @@ with onglet_plan:
                 "Avis de l'Architecte des Bâtiments de France (+1 mois)",
                 key=_defaut("abf", False),
                 disabled=type_autorisation not in TYPES_MAJORES_ABF,
-                help="Abords d'un monument historique ou site patrimonial remarquable "
-                "(art. R423-24 du code de l'urbanisme).",
+                help="Abords d'un monument historique ou site patrimonial remarquable (art. R423-24 du code de l'urbanisme).",
             )
             purge_recours = st.checkbox(
                 "Attendre la purge du recours des tiers (+2 mois)",
@@ -277,98 +282,25 @@ with onglet_plan:
                             key=_defaut(f"delai_{phase.id}", phase.delai_mo),
                         )
 
-scenario_prevu = Scenario(
-    etat=etat,
-    date_debut=date_debut,
-    financement_semaines=financement_semaines,
-    durees=durees,
-    delais_mo=delais,
-    autorisation=autorisation,
-    treve_semaines=treve_semaines,
-    financement_apres=financement_apres,
-    batiment_scolaire=batiment_scolaire,
-    fenetre_travaux=fenetre_travaux,
-    nom_projet=nom_projet,
-)
-# Planning théorique, sans avancement : il fournit la liste des éléments à suivre.
-planning_prevu = scenario_prevu.planning()
-
-
-# --------------------------------------------------------------------------
-# Onglet Suivi : saisie de l'avancement
-
-
-def _en_date(valeur) -> date | None:
-    return None if valeur is None or pd.isna(valeur) else pd.Timestamp(valeur).date()
-
-
-with onglet_suivi:
-    st.markdown(
-        "Indiquez l'avancement réel de chaque étape. Le planning se recalcule à partir des dates réelles "
-        "(les étapes à venir ne peuvent pas démarrer avant aujourd'hui) et se compare au **planning de référence** "
-        "que vous avez figé, par exemple lors d'une délibération."
+    scenario = Scenario(
+        etat=etat,
+        date_debut=date_debut,
+        financement_semaines=financement_semaines,
+        durees=durees,
+        delais_mo=delais,
+        autorisation=autorisation,
+        treve_semaines=treve_semaines,
+        financement_apres=financement_apres,
+        batiment_scolaire=batiment_scolaire,
+        fenetre_travaux=fenetre_travaux,
+        nom_projet=nom_projet,
     )
-    saisi: dict[str, Avancement] = st.session_state.get("avancement", {})
-    elements = elements_suivis(planning_prevu)
-    tableau = pd.DataFrame(
-        [
-            {
-                "Id": id_,
-                "Étape": libelle,
-                "Statut": saisi.get(id_, Avancement()).statut.value,
-                "Début réel": saisi.get(id_, Avancement()).debut,
-                "Fin réelle / prévue": saisi.get(id_, Avancement()).fin,
-                "Commentaire": saisi.get(id_, Avancement()).commentaire,
-            }
-            for id_, libelle in elements
-        ]
-    )
-    for colonne in ("Début réel", "Fin réelle / prévue"):
-        tableau[colonne] = pd.to_datetime(tableau[colonne])
-    with st.expander("✏️ Saisir l'avancement", expanded=True):
-        edite = st.data_editor(
-            tableau,
-            key="editeur_avancement",
-            hide_index=True,
-            width="stretch",
-            disabled=["Étape"],
-            column_config={
-                "Id": None,
-                "Étape": st.column_config.TextColumn(width="large"),
-                "Statut": st.column_config.SelectboxColumn(options=[s.value for s in Statut], required=True),
-                "Début réel": st.column_config.DateColumn(format="DD/MM/YYYY"),
-                "Fin réelle / prévue": st.column_config.DateColumn(
-                    format="DD/MM/YYYY",
-                    help="Terminée : date de fin réelle, validation comprise. "
-                    "En cours : nouvelle date de fin prévue (facultatif).",
-                ),
-                "Commentaire": st.column_config.TextColumn(width="medium"),
-            },
-        )
-    avancement = {
-        ligne["Id"]: Avancement(
-            Statut(ligne["Statut"]),
-            _en_date(ligne["Début réel"]),
-            _en_date(ligne["Fin réelle / prévue"]),
-            ligne["Commentaire"] or "",
-        )
-        for ligne in edite.to_dict("records")
-    }
-    avancement = {k: v for k, v in avancement.items() if v != Avancement()}
-    st.session_state["avancement"] = avancement
+    planning = scenario.planning()
 
-references: list[Reference] = st.session_state.setdefault("references", [])
-scenario = replace(scenario_prevu, avancement=avancement, references=references)
-planning = scenario.planning(aujourd_hui=AUJOURD_HUI)
+    # --------------------------------------------------------------------------
+    # Résultats
 
-
-# --------------------------------------------------------------------------
-# Onglet Planification : résultats
-
-with onglet_plan:
     st.divider()
-    if scenario.suivi_actif:
-        st.caption("📍 Planning actualisé avec l'avancement saisi dans l'onglet « Suivi de l'avancement ».")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Date de fin estimée", planning.date_fin.strftime("%d/%m/%Y"))
     m2.metric(
@@ -388,23 +320,22 @@ with onglet_plan:
 
     if planning.fenetre_travaux is not FenetreTravaux.AUCUNE:
         travaux = planning.taches[(planning.taches["Id"] == "DET") & (planning.taches["Type"] == "Phase")]
-        if not travaux.empty:
-            debut_travaux = travaux["Debut"].min()
-            message = f"🏫 Les travaux démarrent le **{debut_travaux:%d/%m/%Y}**"
-            if len(travaux) > 1:
-                message += f" et se répartissent sur **{len(travaux)} étés**"
-            attente_ete = next((a for a in planning.attentes if a.motif == "début des vacances d'été"), None)
-            if attente_ete and planning.gain_pour_ete_precedent_jours:
-                message += (
-                    f", après **{attente_ete.jours / 7:.0f} semaines d'attente** de l'été. Pour démarrer un été plus "
-                    f"tôt ({debut_travaux.year - 1}), il faudrait gagner environ "
-                    f"**{planning.gain_pour_ete_precedent_jours / 7:.0f} semaines** sur les phases précédentes."
-                )
-            else:
-                message += "."
-            st.info(message)
+        debut_travaux = travaux["Debut"].min()
+        message = f"🏫 Les travaux démarrent le **{debut_travaux:%d/%m/%Y}**"
+        if len(travaux) > 1:
+            message += f" et se répartissent sur **{len(travaux)} étés**"
+        if planning.gain_pour_ete_precedent_jours:
+            attente = next(a for a in planning.attentes if a.motif == "début des vacances d'été")
+            message += (
+                f", après **{attente.jours / 7:.0f} semaines d'attente** de l'été. Pour démarrer un été plus tôt "
+                f"({debut_travaux.year - 1}), il faudrait gagner environ "
+                f"**{planning.gain_pour_ete_precedent_jours / 7:.0f} semaines** sur les phases précédentes."
+            )
+        else:
+            message += "."
+        st.info(message)
 
-    st.plotly_chart(figure_gantt(planning, aujourd_hui=AUJOURD_HUI), width="stretch", key="gantt_plan")
+    st.plotly_chart(figure_gantt(planning, aujourd_hui=date.today()), width="stretch")
 
     st.warning(
         "Vigilance (DET / AOR) : les durées de travaux et de réception sont indicatives et "
@@ -423,7 +354,7 @@ with onglet_plan:
         st.subheader("⬇️ Exporter")
         st.download_button(
             "Planning PDF (à présenter)",
-            lambda: planning_vers_pdf(planning, etat, LOGO),
+            lambda: planning_vers_pdf(planning, etat, LOGO, nom_projet=nom_projet),
             file_name="planning_renovation.pdf",
             mime="application/pdf",
             on_click="ignore",
@@ -454,13 +385,18 @@ with onglet_plan:
         )
         st.download_button(
             "Scénario (.json)",
-            scenario.vers_json(),
+            # Généré au clic, pour inclure le budget saisi dans l'onglet « Budget et financement ».
+            lambda: scenario.vers_json(),
             file_name="scenario_renovation.json",
             mime="application/json",
+            on_click="ignore",
             width="stretch",
-            help="Paramètres, avancement et références : à recharger plus tard depuis la barre latérale.",
+            help="Paramètres du planning et du budget, à recharger plus tard depuis la barre latérale.",
         )
         st.caption("Le Gantt peut aussi être enregistré en image via l'icône 📷 du graphique.")
+
+    # --------------------------------------------------------------------------
+    # Glossaire
 
     with st.expander("📚 Glossaire des phases de la loi MOP", expanded=False):
         for code, definition in GLOSSAIRE_COMPLET.items():
@@ -468,107 +404,290 @@ with onglet_plan:
 
 
 # --------------------------------------------------------------------------
-# Onglet Suivi : référence, écarts et point d'avancement
+# Onglet Budget et financement
 
-with onglet_suivi:
-    col_r1, col_r2, col_r3 = st.columns([3, 2, 1], vertical_alignment="bottom")
-    with col_r1:
-        nom_reference = st.text_input(
-            "Nom de la référence à figer",
-            value=f"Planning validé le {AUJOURD_HUI:%d/%m/%Y}",
-            help="Par exemple : « Délibération du 12/03/2027 » ou « APD validé ».",
-        )
-    with col_r2:
-        if st.button("📌 Figer le planning actuel comme référence", width="stretch"):
-            references.append(Reference.depuis_planning(planning, nom_reference, AUJOURD_HUI))
-            st.session_state["reference_choisie"] = len(references) - 1
-            st.rerun()
 
-    reference = None
-    if references:
-        with col_r3:
-            if st.button("🗑️ Supprimer", width="stretch", help="Supprime la référence sélectionnée."):
-                references.pop(st.session_state.get("reference_choisie", len(references) - 1))
-                st.session_state["reference_choisie"] = max(0, len(references) - 1)
-                st.rerun()
-        choix = st.selectbox(
-            "Comparer à la référence",
-            options=range(len(references)),
-            format_func=lambda i: f"{references[i].nom} (fin prévue le {references[i].date_fin:%d/%m/%Y})",
-            key=_defaut("reference_choisie", len(references) - 1),
-        )
-        reference = references[min(choix, len(references) - 1)]
-    else:
-        st.info("Aucune référence pour l'instant : figez le planning actuel pour pouvoir mesurer les écarts ensuite.")
+def _euros(montant: float) -> str:
+    return f"{montant:,.0f} €".replace(",", " ")
 
-    ecart = ecart_fin_jours(planning, reference)
-    niveau, libelle_meteo = meteo(ecart)
-    elements_statuts = [planning.avancement.get(i, Avancement()).statut for i, _ in elements_suivis(planning)]
-    bandeau = {"vert": st.success, "orange": st.warning, "rouge": st.error, "gris": st.info}[niveau]
-    bandeau(f"**Météo du projet : {libelle_meteo}**", icon=ICONES_METEO[niveau])
-    s2, s3, s4 = st.columns(3)
-    s2.metric("Fin prévue", f"{planning.date_fin:%d/%m/%Y}")
-    s3.metric("Écart avec la référence", "—" if ecart is None else f"{ecart / 7:+.0f} sem.")
-    s4.metric(
-        "Étapes terminées",
-        f"{sum(s is Statut.TERMINEE for s in elements_statuts)} / {len(elements_statuts)}",
+
+def _pct(valeur: float) -> str:
+    return f"{valeur:.1f} %".replace(".", ",")
+
+
+def _jalon(nom: str) -> date | None:
+    return next((j.date for j in planning.jalons if j.nom == nom), None)
+
+
+with onglet_budget:
+    st.markdown(
+        "Estimez le **coût de l'opération**, construisez le **plan de financement** et obtenez l'**échéancier des "
+        "dépenses et recettes par année budgétaire**, calé sur le planning de l'onglet précédent. Les taux par "
+        "défaut sont des ordres de grandeur, à ajuster à votre projet."
     )
 
-    col_p1, col_p2 = st.columns(2)
-    with col_p1:
-        st.subheader("⚠️ Points d'attention")
-        points = points_attention(planning, reference, AUJOURD_HUI)
-        if points:
-            for point in points:
-                st.markdown(f"- {point}")
-        else:
-            st.caption("Aucun point d'attention particulier.")
-    with col_p2:
-        st.subheader("🔜 Prochaines étapes")
-        for jalon in prochains_jalons(planning, AUJOURD_HUI):
-            st.markdown(f"- **{jalon.date:%d/%m/%Y}** — {jalon.nom}")
+    # 1. Coût de l'opération
+    st.subheader("1. Coût de l'opération")
+    defauts = postes_par_defaut(set(planning.taches["Id"]))
+    col_t1, col_t2 = st.columns([1, 2])
+    with col_t1:
+        travaux_ht = st.number_input(
+            "Montant estimé des travaux (€ HT)",
+            min_value=0,
+            step=10_000,
+            key=_defaut("travaux_ht", 0),
+            help="Estimation issue de l'audit énergétique, du programme ou de l'APD.",
+        )
+    with st.expander("⚙️ Hypothèses : honoraires, aléas et frais (modifiables)"):
+        postes: dict[str, float] = {}
+        colonnes_postes = st.columns(3)
+        for i, poste in enumerate(POSTES):
+            pourcent = poste.mode is Mode.POURCENT
+            with colonnes_postes[i % 3]:
+                postes[poste.id] = st.number_input(
+                    f"{poste.libelle} ({'% des travaux' if pourcent else '€ HT'})",
+                    min_value=0.0,
+                    step=0.1 if pourcent else 1_000.0,
+                    format="%.1f" if pourcent else "%.0f",
+                    key=_defaut(f"poste_{poste.id}", float(defauts[poste.id])),
+                    help=poste.aide or None,
+                )
 
-    st.plotly_chart(
-        figure_gantt(planning, aujourd_hui=AUJOURD_HUI, reference=reference.elements if reference else None),
-        width="stretch",
-        key="gantt_suivi",
+    with st.expander("⚙️ FCTVA et versement des aides"):
+        col_v1, col_v2, col_v3 = st.columns(3)
+        with col_v1:
+            taux_fctva = st.number_input(
+                "Taux du FCTVA (%)",
+                min_value=0.0,
+                max_value=30.0,
+                step=0.001,
+                format="%.3f",
+                key=_defaut("taux_fctva", TAUX_FCTVA_DEFAUT),
+                help="16,404 % depuis 2015 : à vérifier selon la loi de finances en vigueur.",
+            )
+        with col_v2:
+            regime_fctva = st.selectbox(
+                "Versement du FCTVA",
+                options=list(RegimeFCTVA),
+                format_func=lambda r: r.value,
+                key=_defaut("regime_fctva", RegimeFCTVA.N1),
+                help="Selon le régime de votre collectivité : N (EPCI, communes nouvelles…), N+1 (régime issu du "
+                "plan de relance de 2009) ou N+2 (régime de droit commun).",
+            )
+        with col_v3:
+            acompte_aides = st.number_input(
+                "Aides versées au démarrage des travaux (%)",
+                min_value=0.0,
+                max_value=100.0,
+                step=5.0,
+                key=_defaut("acompte_aides", 30.0),
+                help="Avance ou acompte ; le solde est versé environ 3 mois après la réception, sur justificatifs.",
+            )
+
+    # 2. Plan de financement
+    financeurs_saisis: list[Financeur] = st.session_state.get("financeurs") or Budget().financeurs
+    tableau_financeurs = pd.DataFrame(
+        [
+            {
+                "Financeur": f.nom,
+                "Public": f.public,
+                "Taux (% du HT)": f.taux,
+                "Montant (€)": f.montant,
+                "Statut": f.statut.value,
+            }
+            for f in financeurs_saisis
+        ]
     )
 
-    st.subheader("📋 Tableau de suivi")
-    suivi = comparer(planning, reference).drop(columns=["Id"])
+    budget_provisoire = Budget(
+        travaux_ht=float(travaux_ht),
+        postes=postes,
+        financeurs=financeurs_saisis,
+        taux_fctva=taux_fctva,
+        regime_fctva=regime_fctva,
+        acompte_aides=acompte_aides,
+    )
+    couts = budget_provisoire.couts()
+    with col_t2:
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Coût de l'opération HT", _euros(budget_provisoire.total_ht))
+        k2.metric("TVA", _euros(budget_provisoire.total_tva))
+        k3.metric("Coût de l'opération TTC", _euros(budget_provisoire.total_ttc))
     st.dataframe(
-        suivi,
+        couts.drop(columns=["Id"]),
+        hide_index=True,
+        width="stretch",
+        column_config={c: st.column_config.NumberColumn(f"{c} (€)", format="localized") for c in ("HT", "TVA", "TTC")},
+    )
+
+    st.subheader("2. Plan de financement")
+    st.caption(
+        "Saisissez pour chaque financeur un taux (sur le coût HT) ou un montant. Ajoutez des lignes au besoin "
+        "(programme ACTEE pour les études, fonds européens, mécénat…). Les CEE sont des aides privées."
+    )
+    edite = st.data_editor(
+        tableau_financeurs,
+        key="editeur_financeurs",
+        num_rows="dynamic",
         hide_index=True,
         width="stretch",
         column_config={
-            "Début": st.column_config.DateColumn(format="DD/MM/YYYY"),
-            "Fin": st.column_config.DateColumn(format="DD/MM/YYYY"),
-            "Fin (référence)": st.column_config.DateColumn(format="DD/MM/YYYY"),
-            "Écart (sem.)": st.column_config.NumberColumn(format="%+d"),
+            "Financeur": st.column_config.TextColumn(required=True, width="large"),
+            "Public": st.column_config.CheckboxColumn(help="Aide d'une personne publique (comptée dans le plafond)."),
+            "Taux (% du HT)": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, format="%.1f %%"),
+            "Montant (€)": st.column_config.NumberColumn(
+                min_value=0.0, format="localized", help="Prioritaire sur le taux s'il est renseigné."
+            ),
+            "Statut": st.column_config.SelectboxColumn(options=[s.value for s in StatutAide], required=True),
         },
     )
+    financeurs = [
+        Financeur(
+            str(ligne["Financeur"]),
+            float(ligne["Taux (% du HT)"] or 0),
+            float(ligne["Montant (€)"] or 0),
+            bool(ligne["Public"]) if pd.notna(ligne["Public"]) else True,
+            StatutAide(ligne["Statut"]) if ligne["Statut"] else StatutAide.A_SOLLICITER,
+        )
+        for ligne in edite.fillna({"Taux (% du HT)": 0, "Montant (€)": 0}).to_dict("records")
+        if ligne["Financeur"] and pd.notna(ligne["Financeur"])
+    ]
+    st.session_state["financeurs"] = financeurs
+    budget = replace(budget_provisoire, financeurs=financeurs)
+    scenario = replace(scenario, budget=budget)
 
-    col_e1, col_e2 = st.columns(2)
-    with col_e1:
+    f1, f2, f3, f4 = st.columns(4)
+    f1.metric(f"Aides publiques ({_pct(budget.taux_aides_publiques)} du HT)", _euros(budget.aides_publiques))
+    f2.metric("Aides privées (CEE…)", _euros(budget.aides_privees))
+    f3.metric("FCTVA attendu", _euros(budget.fctva), help=f"{budget.taux_fctva:.3f} % des dépenses TTC éligibles")
+    f4.metric(
+        "Reste à charge net",
+        _euros(budget.reste_a_charge),
+        help="Coût TTC − aides − FCTVA : à couvrir par l'autofinancement ou l'emprunt.",
+    )
+    if budget.total_ht and budget.depasse_plafond:
+        st.error(
+            f"Les aides publiques atteignent {_pct(budget.taux_aides_publiques)} du coût HT : au-delà de "
+            f"{PLAFOND_AIDES_PUBLIQUES:.0f} %, la participation minimale de 20 % du maître d'ouvrage n'est pas "
+            "respectée (CGCT, art. L1111-10). Des dérogations existent : à vérifier auprès de la préfecture."
+        )
+    elif budget.total_ht and budget.aides:
+        st.success(
+            f"Participation du maître d'ouvrage : {_pct(100 - budget.taux_aides_publiques)} du coût HT "
+            "(minimum 20 % des financements publics, CGCT art. L1111-10)."
+        )
+
+    if budget.total_ttc:
+        parts = {
+            "Aides publiques": budget.aides_publiques,
+            "Aides privées (CEE…)": budget.aides_privees,
+            "FCTVA": budget.fctva,
+            "Reste à charge": max(budget.reste_a_charge, 0),
+        }
+        donut = go.Figure(
+            go.Pie(
+                labels=list(parts),
+                values=list(parts.values()),
+                hole=0.55,
+                sort=False,
+                marker=dict(colors=["#0915a6", "#2e9e44", "#7b2cbf", "#ff5300"]),
+                textinfo="percent",
+                textposition="inside",
+                hovertemplate="%{label} : %{value:,.0f} €<extra></extra>",
+            )
+        )
+        donut.update_layout(
+            title=dict(text="Qui finance le coût TTC ?", font=dict(size=16, color="#0915a6")),
+            showlegend=True,
+            legend=dict(orientation="h", y=-0.05),
+            separators=", ",
+            uniformtext=dict(minsize=11, mode="hide"),
+            height=360,
+            margin=dict(l=10, r=10, t=50, b=10),
+        )
+        col_d1, col_d2 = st.columns([1, 1])
+        with col_d1:
+            st.plotly_chart(donut, width="stretch", key="donut_financement")
+        with col_d2:
+            st.markdown("**Calendrier des demandes d'aide (issu du planning)**")
+            depot = _jalon("APD validé")
+            complet = _jalon("Financement : dossier complet")
+            signature = _jalon("Marchés de travaux signés")
+            if depot and complet:
+                st.markdown(f"- Montage et dépôt des dossiers à partir du **{depot:%d/%m/%Y}** (APD validé)")
+                st.markdown(f"- Dossiers complets attendus le **{complet:%d/%m/%Y}**")
+            if signature:
+                st.markdown(
+                    f"- Signature des marchés de travaux le **{signature:%d/%m/%Y}** : aucun marché ne doit être "
+                    "signé avant l'accusé de dossier complet (commencement d'exécution)."
+                )
+            st.caption(
+                "Pensez aux calendriers des appels à projets : la DETR et la DSIL se déposent en général en début "
+                "d'année auprès de la préfecture."
+            )
+
+    # 3. Échéancier
+    st.subheader("3. Échéancier budgétaire (autorisation de programme et crédits de paiement)")
+    echeancier = budget.echeancier(planning)
+    if budget.total_ttc and not echeancier.empty:
+        besoin = -echeancier["Cumul"].min()
+        annee_besoin = int(echeancier.loc[echeancier["Cumul"].idxmin(), "Année"])
+        e1, e2, e3 = st.columns(3)
+        e1.metric("Autorisation de programme (TTC)", _euros(budget.total_ttc))
+        e2.metric(
+            "Besoin de financement maximal",
+            _euros(besoin),
+            help="Creux de trésorerie cumulé, avant perception du solde des aides et du FCTVA.",
+        )
+        e3.metric("Année du besoin maximal", str(annee_besoin))
+
+        fig = go.Figure()
+        fig.add_bar(x=echeancier["Année"], y=-echeancier["Dépenses TTC"], name="Dépenses TTC", marker_color="#ff5300")
+        fig.add_bar(x=echeancier["Année"], y=echeancier["Aides"], name="Aides", marker_color="#2e9e44")
+        fig.add_bar(x=echeancier["Année"], y=echeancier["FCTVA"], name="FCTVA", marker_color="#7b2cbf")
+        fig.add_scatter(
+            x=echeancier["Année"],
+            y=echeancier["Cumul"],
+            name="Solde cumulé",
+            mode="lines+markers",
+            line=dict(color="#0915a6", width=3),
+        )
+        fig.update_layout(
+            barmode="relative",
+            height=420,
+            margin=dict(l=10, r=10, t=40, b=10),
+            plot_bgcolor="white",
+            legend=dict(orientation="h", y=-0.15),
+            yaxis=dict(title="€", gridcolor="lightgrey", tickformat=",.0f"),
+            xaxis=dict(dtick=1),
+            separators=", ",
+            title=dict(text="Dépenses et recettes par année", font=dict(size=16, color="#0915a6")),
+        )
+        st.plotly_chart(fig, width="stretch", key="echeancier_budget")
+        st.dataframe(
+            echeancier.round(0),
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Année": st.column_config.NumberColumn(format="%d"),
+                **{
+                    c: st.column_config.NumberColumn(f"{c} (€)", format="localized")
+                    for c in ("Dépenses TTC", "Aides", "FCTVA", "Solde", "Cumul")
+                },
+            },
+        )
+        st.caption(
+            "Les crédits de paiement de chaque année correspondent à la colonne « Dépenses TTC ». Hypothèses : "
+            "travaux, aléas et révisions répartis sur la durée des travaux ; honoraires de maîtrise d'œuvre répartis "
+            "par élément de mission ; aides versées en acompte au démarrage des travaux et en solde après la réception."
+        )
         st.download_button(
-            "🗳️ Point d'avancement pour les élus (PDF)",
-            lambda: point_avancement_pdf(planning, reference, AUJOURD_HUI, nom_projet, LOGO),
-            file_name=f"point_avancement_{AUJOURD_HUI:%Y%m%d}.pdf",
-            mime="application/pdf",
+            "⬇️ Budget et plan de financement (.xlsx)",
+            lambda: budget_vers_excel(budget, planning),
+            file_name="budget_renovation.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             on_click="ignore",
             type="primary",
-            width="stretch",
         )
-    with col_e2:
-        st.download_button(
-            "💾 Enregistrer le suivi (scénario .json)",
-            scenario.vers_json(),
-            file_name="scenario_renovation.json",
-            mime="application/json",
-            width="stretch",
-            key="json_suivi",
-        )
-    st.caption(
-        "L'avancement et les références ne sont conservés que dans le fichier scénario : pensez à l'enregistrer "
-        "après chaque mise à jour, puis à le recharger depuis la barre latérale."
-    )
+    else:
+        st.info("Saisissez le montant estimé des travaux pour obtenir l'échéancier.")
