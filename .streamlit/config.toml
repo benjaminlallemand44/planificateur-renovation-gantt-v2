@@ -4,3 +4,7 @@ base = "light"
 
 [browser]
 gatherUsageStats = false
+
+[server]
+# Les scénarios JSON font quelques kilo-octets : inutile d'accepter des fichiers de 200 Mo.
+maxUploadSize = 1

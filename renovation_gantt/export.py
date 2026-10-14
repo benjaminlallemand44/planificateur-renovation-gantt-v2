@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime, timedelta
 import pandas as pd
 
 from .budget import Budget
+from .excel import finaliser_classeur
 from .phases import (
     FINANCEMENT_APRES_DEFAUT,
     TREVE_SEMAINES_DEFAUT,
@@ -102,7 +103,21 @@ def planning_vers_ics(planning: Planning, nom_projet: str = "Projet de rénovati
             "END:VEVENT",
         ]
     lignes.append("END:VCALENDAR")
-    return ("\r\n".join(lignes) + "\r\n").encode("utf-8")
+    return "".join(_plier_ligne_ics(ligne) for ligne in lignes).encode("utf-8")
+
+
+def _plier_ligne_ics(ligne: str, limite: int = 75) -> str:
+    """Plie une ligne iCalendar à 75 octets (RFC 5545, § 3.1), sans couper un caractère UTF-8."""
+    morceaux, courant = [], ""
+    for caractere in ligne:
+        # Les lignes de continuation commencent par une espace, qui compte dans la limite.
+        maximum = limite if not morceaux else limite - 1
+        if len((courant + caractere).encode("utf-8")) > maximum:
+            morceaux.append(courant)
+            courant = ""
+        courant += caractere
+    morceaux.append(courant)
+    return "\r\n ".join(morceaux) + "\r\n"
 
 
 def planning_vers_excel(planning: Planning) -> bytes:
@@ -115,10 +130,7 @@ def planning_vers_excel(planning: Planning) -> bytes:
         resume.to_excel(writer, sheet_name="Résumé", index=False)
         planning_vers_dataframe(planning).to_excel(writer, sheet_name="Planning", index=False)
         jalons.to_excel(writer, sheet_name="Jalons", index=False)
-        for feuille in writer.sheets.values():
-            for colonne in feuille.columns:
-                largeur = max(len(str(c.value or "")) for c in colonne)
-                feuille.column_dimensions[colonne[0].column_letter].width = min(max(12, largeur + 2), 80)
+        finaliser_classeur(writer)
     return tampon.getvalue()
 
 

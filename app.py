@@ -69,6 +69,7 @@ from renovation_gantt.phases import (
     definition_courte,
     phases_pour_etat,
 )
+from renovation_gantt.saisie import borner
 
 RACINE = Path(__file__).parent
 LOGO = RACINE / "images" / "Logo_ACTEE_CMYN-HD.png"
@@ -87,6 +88,23 @@ def _defaut(cle: str, valeur) -> str:
 # Chargement d'un scénario : on alimente st.session_state avant de créer les widgets.
 
 
+# Bornes des champs de saisie. Un scénario chargé est ramené dans ces bornes : sinon Streamlit remplacerait
+# silencieusement toute valeur hors bornes par le minimum (200 semaines de travaux deviendraient 1 semaine).
+DUREE_MAX = 156
+DELAI_MO_MAX = 52
+FINANCEMENT_MAX = 104
+TREVE_MAX = 4
+TAUX_FCTVA_MAX = 30.0
+
+
+def _borner(cle: str, valeur, mini, maxi, libelle: str, ajustements: list[str]) -> None:
+    """Place dans la session une valeur ramenée dans [mini, maxi] et note l'ajustement éventuel."""
+    corrige, ajuste = borner(valeur, mini, maxi)
+    if ajuste:
+        ajustements.append(f"{libelle} : {valeur} → {corrige}")
+    st.session_state[cle] = corrige
+
+
 def _charger_scenario() -> None:
     fichier = st.session_state.get("fichier_scenario")
     if fichier is None:
@@ -99,26 +117,34 @@ def _charger_scenario() -> None:
     st.session_state["etat"] = scenario.etat
     st.session_state["date_debut"] = scenario.date_debut
     st.session_state["nom_projet"] = scenario.nom_projet
+    ajustements: list[str] = []
     budget = scenario.budget
-    st.session_state["travaux_ht"] = int(budget.travaux_ht)
+    _borner("travaux_ht", budget.travaux_ht, 0, 10**10, "Montant des travaux", ajustements)
     for id_poste, valeur in budget.postes.items():
-        st.session_state[f"poste_{id_poste}"] = float(valeur)
-    st.session_state["taux_fctva"] = budget.taux_fctva
+        _borner(f"poste_{id_poste}", valeur, 0.0, 10.0**9, f"Poste {id_poste}", ajustements)
+    _borner("taux_fctva", budget.taux_fctva, 0.0, TAUX_FCTVA_MAX, "Taux du FCTVA", ajustements)
     st.session_state["regime_fctva"] = budget.regime_fctva
-    st.session_state["acompte_aides"] = budget.acompte_aides
+    _borner("acompte_aides", budget.acompte_aides, 0.0, 100.0, "Acompte des aides", ajustements)
     st.session_state["financeurs"] = budget.financeurs
     st.session_state.pop("editeur_financeurs", None)
     st.session_state["financement_on"] = bool(scenario.financement_semaines)
     if scenario.financement_semaines:
-        st.session_state["financement_semaines"] = scenario.financement_semaines
+        _borner(
+            "financement_semaines",
+            scenario.financement_semaines,
+            1,
+            FINANCEMENT_MAX,
+            "Durée des dossiers de financement",
+            ajustements,
+        )
     st.session_state["financement_apres"] = scenario.financement_apres
     for phase in scenario.phases():
-        st.session_state[f"duree_{phase.id}"] = phase.duree
-        st.session_state[f"delai_{phase.id}"] = phase.delai_mo
+        _borner(f"duree_{phase.id}", phase.duree, phase.duree_min, DUREE_MAX, f"Durée « {phase.nom} »", ajustements)
+        _borner(f"delai_{phase.id}", phase.delai_mo, 0, DELAI_MO_MAX, f"Délai MO « {phase.nom} »", ajustements)
     st.session_state["type_autorisation"] = scenario.autorisation.type
     st.session_state["abf"] = scenario.autorisation.abf
     st.session_state["purge_recours"] = scenario.autorisation.purge_recours
-    st.session_state["treve_semaines"] = scenario.treve_semaines
+    _borner("treve_semaines", scenario.treve_semaines, 0, TREVE_MAX, "Trêve de fin d'année", ajustements)
     st.session_state["batiment_scolaire"] = scenario.batiment_scolaire
     if scenario.fenetre_travaux is not FenetreTravaux.AUCUNE:
         st.session_state["fenetre_travaux"] = scenario.fenetre_travaux
@@ -126,6 +152,7 @@ def _charger_scenario() -> None:
         p.delai_mo != d.delai_mo for p, d in zip(scenario.phases(), phases_pour_etat(scenario.etat), strict=True)
     )
     st.session_state["erreur_scenario"] = None
+    st.session_state["ajustements_scenario"] = ajustements
     st.session_state["scenario_charge"] = fichier.name
 
 
@@ -141,6 +168,11 @@ with st.sidebar:
         st.error(st.session_state["erreur_scenario"])
     elif st.session_state.get("scenario_charge"):
         st.success(f"Scénario « {st.session_state['scenario_charge']} » chargé.")
+        if st.session_state.get("ajustements_scenario"):
+            st.warning(
+                "Valeurs hors des limites de saisie, ramenées dans les bornes :\n\n"
+                + "\n".join(f"- {a}" for a in st.session_state["ajustements_scenario"])
+            )
     afficher_delais = st.toggle(
         "Modifier les délais de validation MO",
         key=_defaut("afficher_delais", False),
@@ -208,7 +240,7 @@ with onglet_plan:
             financement_semaines = st.number_input(
                 "Durée jusqu'à l'accusé de dossier complet (sem.)",
                 min_value=1,
-                max_value=104,
+                max_value=FINANCEMENT_MAX,
                 key=_defaut("financement_semaines", 12),
                 help="Montage et dépôt des dossiers (DETR, DSIL, Fonds vert…), puis délai pour que le dossier soit "
                 "déclaré complet (réputé complet après 2 mois sans réponse). Les marchés de travaux ne seront pas "
@@ -243,7 +275,7 @@ with onglet_plan:
             treve_semaines = st.number_input(
                 "Trêve de fin d'année (sem.)",
                 min_value=0,
-                max_value=4,
+                max_value=TREVE_MAX,
                 key=_defaut("treve_semaines", TREVE_SEMAINES_DEFAUT),
                 help="Semaines non travaillées jusqu'au 1er janvier inclus. Les phases qui la traversent sont "
                 "prolongées d'autant ; les délais réglementaires, eux, continuent de courir.",
@@ -292,7 +324,7 @@ with onglet_plan:
                         durees[phase.id] = st.number_input(
                             "Durée (sem.)",
                             min_value=phase.duree_min,
-                            max_value=156,
+                            max_value=DUREE_MAX,
                             key=_defaut(f"duree_{phase.id}", phase.duree),
                             help=f"Minimum : {phase.duree_min} semaine(s)" if phase.duree_min > 1 else None,
                         )
@@ -303,7 +335,7 @@ with onglet_plan:
                         delais[phase.id] = st.number_input(
                             "Délai MO (sem.)",
                             min_value=0,
-                            max_value=52,
+                            max_value=DELAI_MO_MAX,
                             key=_defaut(f"delai_{phase.id}", phase.delai_mo),
                         )
 
@@ -388,21 +420,24 @@ with onglet_plan:
         )
         st.download_button(
             "Planning Excel (.xlsx)",
-            planning_vers_excel(planning),
+            lambda: planning_vers_excel(planning),
+            on_click="ignore",
             file_name="planning_renovation.xlsx",
             width="stretch",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
         st.download_button(
             "Planning CSV",
-            planning_vers_csv(planning),
+            lambda: planning_vers_csv(planning),
+            on_click="ignore",
             file_name="planning_renovation.csv",
             mime="text/csv",
             width="stretch",
         )
         st.download_button(
             "Jalons dans mon agenda (.ics)",
-            planning_vers_ics(planning, nom_projet or "Projet de rénovation"),
+            lambda: planning_vers_ics(planning, nom_projet or "Projet de rénovation"),
+            on_click="ignore",
             file_name="jalons_renovation.ics",
             mime="text/calendar",
             width="stretch",
@@ -484,7 +519,7 @@ with onglet_budget:
             taux_fctva = st.number_input(
                 "Taux du FCTVA (%)",
                 min_value=0.0,
-                max_value=30.0,
+                max_value=TAUX_FCTVA_MAX,
                 step=0.001,
                 format="%.3f",
                 key=_defaut("taux_fctva", TAUX_FCTVA_DEFAUT),

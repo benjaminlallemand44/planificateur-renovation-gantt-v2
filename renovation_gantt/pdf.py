@@ -113,7 +113,7 @@ def _entete(pdf: FPDF, etat: EtatProjet | None, logo: Path | None, edition: date
     pdf.set_xy(x_texte, 16)
     pdf.set_font("DejaVu", "", 9)
     pdf.set_text_color(60, 60, 60)
-    parties = [nom_projet] if nom_projet else []
+    parties = [texte_sans_emoji(nom_projet)] if nom_projet else []
     if etat is not None:
         parties.append(f"Situation de départ : {EtatProjet(etat).value}")
     parties.append(f"Édité le {edition:%d/%m/%Y}")

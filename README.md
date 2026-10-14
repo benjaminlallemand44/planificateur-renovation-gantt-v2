@@ -81,7 +81,7 @@ fichier `app.py`.
 | VISA et DET absents du glossaire | Glossaire complet |
 | Pas de bandeau ni de délai MO pour l'AMO | Bandeau AMO et délai de validation |
 | Gantt effacé à chaque modification (bouton) | Gantt recalculé en direct |
-| Tests cassés (modules `config`/`gantt` inexistants) | 109 tests pytest, dont des tests de l'interface (`AppTest`) |
+| Tests cassés (modules `config`/`gantt` inexistants) | 121 tests pytest, dont des tests de l'interface (`AppTest`) |
 | README non à jour | README, CI GitHub Actions (Python 3.11 à 3.14), ruff |
 | Pas d'export ni de date de fin | Excel, CSV, JSON, jalons, indicateurs |
 
@@ -95,6 +95,8 @@ renovation_gantt/
 ├── charts.py               Diagramme de Gantt Plotly
 ├── budget.py               Coût de l'opération, plan de financement, FCTVA, échéancier
 ├── export.py               Excel / CSV / agenda .ics / scénarios JSON
+├── excel.py                Mise en forme des classeurs (largeurs, neutralisation des formules)
+├── saisie.py               Bornage des valeurs lues dans un scénario
 └── pdf.py                  Export PDF (Gantt matplotlib + mise en page fpdf2)
 tests/                      Tests pytest
 images/                     Logo ACTEE

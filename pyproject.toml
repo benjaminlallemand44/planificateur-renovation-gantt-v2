@@ -1,6 +1,6 @@
 [project]
 name = "renovation-gantt"
-version = "2.5.1"
+version = "2.5.2"
 description = "Planificateur de projet de rénovation énergétique (diagramme de Gantt, loi MOP)"
 requires-python = ">=3.11"
 license = { text = "MIT" }

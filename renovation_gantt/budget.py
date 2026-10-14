@@ -7,13 +7,16 @@ de bâtiment public ; ils sont tous modifiables dans l'interface.
 from __future__ import annotations
 
 import io
+import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
+from functools import cached_property
 
 import pandas as pd
 
+from .excel import finaliser_classeur
 from .planning import TYPE_DELAI_MO, TYPE_PHASE, Planning
 
 
@@ -135,8 +138,10 @@ def postes_par_defaut(ids_phases: set[str]) -> dict[str, float]:
     return valeurs
 
 
-@dataclass
+@dataclass(frozen=True)
 class Budget:
+    """Hypothèses budgétaires (immuables : utiliser dataclasses.replace pour en dériver une variante)."""
+
     travaux_ht: float = 0.0
     postes: dict[str, float] = field(default_factory=dict)
     financeurs: list[Financeur] = field(default_factory=lambda: list(FINANCEURS_DEFAUT))
@@ -148,7 +153,9 @@ class Budget:
 
     # ------------------------------------------------------------------ coûts
 
-    def couts(self) -> pd.DataFrame:
+    @cached_property
+    def _couts(self) -> pd.DataFrame:
+        # Calculé une seule fois par budget : l'interface interroge les totaux de nombreuses fois.
         lignes = [_cout("TRAVAUX", "Travaux", self.travaux_ht, TVA_TRAVAUX)]
         for poste in POSTES:
             valeur = self.postes.get(poste.id, poste.valeur)
@@ -156,17 +163,20 @@ class Budget:
             lignes.append(_cout(poste.id, poste.libelle, ht, poste.tva))
         return pd.DataFrame(lignes)
 
-    @property
+    def couts(self) -> pd.DataFrame:
+        return self._couts.copy()
+
+    @cached_property
     def total_ht(self) -> float:
-        return float(self.couts()["HT"].sum())
+        return float(self._couts["HT"].sum())
 
-    @property
+    @cached_property
     def total_ttc(self) -> float:
-        return float(self.couts()["TTC"].sum())
+        return float(self._couts["TTC"].sum())
 
-    @property
+    @cached_property
     def total_tva(self) -> float:
-        return float(self.couts()["TVA"].sum())
+        return float(self._couts["TVA"].sum())
 
     # ------------------------------------------------------- financement
 
@@ -208,7 +218,7 @@ class Budget:
     @property
     def fctva(self) -> float:
         """FCTVA attendu sur les dépenses TTC (assiette simplifiée : toutes les dépenses soumises à TVA)."""
-        couts = self.couts()
+        couts = self._couts
         return float(couts.loc[couts["TVA"] > 0, "TTC"].sum()) * self.taux_fctva / 100
 
     @property
@@ -222,7 +232,7 @@ class Budget:
         """Dépenses TTC, aides, FCTVA et solde par année budgétaire, calés sur le planning."""
         depenses: dict[int, float] = defaultdict(float)
         eligibles: dict[int, float] = defaultdict(float)
-        for ligne in self.couts().itertuples():
+        for ligne in self._couts.itertuples():
             for annee, montant in _repartir(ligne.TTC, fenetres(planning, ligne.Id)).items():
                 depenses[annee] += montant
                 if ligne.TVA > 0:
@@ -277,9 +287,9 @@ class Budget:
             postes={k: float(v) for k, v in (donnees.get("postes") or {}).items()},
             financeurs=[
                 Financeur(
-                    f["nom"],
-                    float(f.get("taux", 0)),
-                    float(f.get("montant", 0)),
+                    str(f["nom"]),
+                    _nombre_borne(f.get("taux", 0), 0.0, 100.0),
+                    _nombre_borne(f.get("montant", 0), 0.0, float("inf")),
                     bool(f.get("public", True)),
                     StatutAide[f.get("statut", "A_SOLLICITER")],
                 )
@@ -369,6 +379,15 @@ def _ajouter_mois(jour: date, mois: int) -> date:
     return (pd.Timestamp(jour) + pd.DateOffset(months=mois)).date()
 
 
+def _nombre_borne(valeur, mini: float, maxi: float) -> float:
+    """Convertit une valeur lue dans un fichier en nombre compris entre mini et maxi (0 si illisible)."""
+    try:
+        nombre = float(valeur)
+    except (TypeError, ValueError):
+        return mini
+    return mini if math.isnan(nombre) else min(max(nombre, mini), maxi)
+
+
 def _cout(id_: str, libelle: str, ht: float, tva: float) -> dict:
     return {"Id": id_, "Poste": libelle, "HT": round(ht, 2), "TVA": round(ht * tva, 2), "TTC": round(ht * (1 + tva), 2)}
 
@@ -397,8 +416,5 @@ def budget_vers_excel(budget: Budget, planning: Planning) -> bytes:
         budget.couts().drop(columns=["Id"]).to_excel(writer, sheet_name="Coût de l'opération", index=False)
         budget.plan_financement().to_excel(writer, sheet_name="Plan de financement", index=False)
         budget.echeancier(planning).to_excel(writer, sheet_name="Échéancier", index=False)
-        for feuille in writer.sheets.values():
-            for colonne in feuille.columns:
-                largeur = max(len(str(c.value or "")) for c in colonne)
-                feuille.column_dimensions[colonne[0].column_letter].width = min(max(12, largeur + 2), 70)
+        finaliser_classeur(writer, largeur_max=70)
     return tampon.getvalue()
