@@ -67,3 +67,16 @@ def test_onglet_budget():
     labels = [m.label for m in at.metric]
     assert "Coût de l'opération TTC" in labels and "Reste à charge net" in labels
     assert any("participation minimale de 20 %" in e.value for e in at.error)
+
+
+def test_rechargement_du_package_apres_mise_a_jour():
+    """Après une mise à jour du dépôt, un package resté en mémoire avec l'ancien code est rechargé."""
+    import sys
+
+    import renovation_gantt
+
+    renovation_gantt._empreinte = "ancienne-version"
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert not at.exception
+    assert sys.modules["renovation_gantt"] is not renovation_gantt
+    assert sys.modules["renovation_gantt"]._empreinte == renovation_gantt.empreinte_sources()

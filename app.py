@@ -5,6 +5,8 @@ Lancement : ``streamlit run app.py``
 
 from __future__ import annotations
 
+import hashlib
+import sys
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -12,6 +14,29 @@ from pathlib import Path
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+
+def _recharger_le_package_si_modifie() -> None:
+    """Recharge le package ``renovation_gantt`` quand ses fichiers ont changé.
+
+    Streamlit réexécute ``app.py`` à chaque mise à jour du dépôt, mais garde en mémoire les modules déjà importés :
+    sans ce rechargement, l'application mélange l'ancien et le nouveau code après une mise à jour sur Streamlit
+    Cloud (erreurs du type « unexpected keyword argument »). La session est alors réinitialisée, comme après un
+    redémarrage, car elle peut contenir des objets créés par l'ancien code.
+    """
+    package = sys.modules.get("renovation_gantt")
+    if package is None:
+        return
+    dossier = Path(__file__).parent / "renovation_gantt"
+    # Même calcul que renovation_gantt.empreinte_sources, refait ici sans passer par le module en mémoire.
+    actuelle = hashlib.sha1(b"".join(f.read_bytes() for f in sorted(dossier.glob("*.py")))).hexdigest()
+    if getattr(package, "_empreinte", None) != actuelle:
+        for nom in [n for n in sys.modules if n == "renovation_gantt" or n.startswith("renovation_gantt.")]:
+            del sys.modules[nom]
+        st.session_state.clear()
+
+
+_recharger_le_package_si_modifie()
 
 from renovation_gantt import __version__
 from renovation_gantt.budget import (
