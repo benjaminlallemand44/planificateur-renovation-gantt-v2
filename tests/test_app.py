@@ -75,8 +75,17 @@ def test_rechargement_du_package_apres_mise_a_jour():
 
     import renovation_gantt
 
-    renovation_gantt._empreinte = "ancienne-version"
-    at = AppTest.from_file(APP, default_timeout=30).run()
-    assert not at.exception
-    assert sys.modules["renovation_gantt"] is not renovation_gantt
-    assert sys.modules["renovation_gantt"]._empreinte == renovation_gantt.empreinte_sources()
+    # Les modules d'origine sont remis en place ensuite, pour ne pas mélanger les classes dans les autres tests.
+    originaux = {n: m for n, m in sys.modules.items() if n.split(".")[0] == "renovation_gantt"}
+    empreinte = renovation_gantt._empreinte
+    try:
+        renovation_gantt._empreinte = "ancienne-version"
+        at = AppTest.from_file(APP, default_timeout=30).run()
+        assert not at.exception
+        assert sys.modules["renovation_gantt"] is not renovation_gantt
+        assert sys.modules["renovation_gantt"]._empreinte == renovation_gantt.empreinte_sources()
+    finally:
+        renovation_gantt._empreinte = empreinte
+        for nom in [n for n in sys.modules if n.split(".")[0] == "renovation_gantt"]:
+            del sys.modules[nom]
+        sys.modules.update(originaux)
