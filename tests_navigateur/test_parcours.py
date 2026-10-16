@@ -109,9 +109,11 @@ def test_ajout_d_un_financeur(page: Page):
     grille = page.locator('.st-key-editeur_financeurs [data-testid="stDataFrame"]')
     grille.scroll_into_view_if_needed()
     grille.hover()
+    # La barre d'outils de la grille peut être recouverte (en-tête de l'appli, grille) selon la taille d'écran :
+    # on déclenche le clic directement sur le bouton plutôt qu'aux coordonnées de la souris.
     page.locator('.st-key-editeur_financeurs [data-testid="stElementToolbarButton"]').filter(
         has=page.locator('[aria-label="Add row"]')
-    ).first.click()
+    ).first.locator("button").dispatch_event("click")
     page.keyboard.press("Escape")
     _attendre_calcul(page)
     # La ligne ajoutée est la 7e (index 6) : on la renomme puis on saisit le montant (3 colonnes à droite du nom).
