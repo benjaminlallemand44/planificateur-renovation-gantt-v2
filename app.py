@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import sys
+import uuid
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -117,6 +118,12 @@ def _charger_scenario() -> None:
     except ValueError as exc:
         st.session_state["erreur_scenario"] = str(exc)
         return
+    _appliquer_scenario(scenario)
+    st.session_state["scenario_charge"] = fichier.name
+
+
+def _appliquer_scenario(scenario: Scenario) -> None:
+    """Place les paramètres d'un scénario dans la session, avant la création des widgets."""
     st.session_state["etat"] = scenario.etat
     st.session_state["date_debut"] = scenario.date_debut
     st.session_state["nom_projet"] = scenario.nom_projet
@@ -168,7 +175,69 @@ def _charger_scenario() -> None:
     )
     st.session_state["erreur_scenario"] = None
     st.session_state["ajustements_scenario"] = ajustements
-    st.session_state["scenario_charge"] = fichier.name
+
+
+# --------------------------------------------------------------------------
+# Sauvegarde automatique dans le navigateur (localStorage) : les saisies survivent à un rechargement de la page
+# ou à une mise à jour de l'application, sur le même ordinateur et le même navigateur.
+
+CLE_MEMOIRE = "planificateur-renovation-gantt:scenario"
+_JS_MEMOIRE = """
+export default function ({ data, setStateValue }) {
+  const cle = data.cle;
+  let stocke = null;
+  try { stocke = window.localStorage.getItem(cle); } catch (e) { /* stockage indisponible (navigation privée…) */ }
+  if (!data.pret) {
+    // Première exécution de la session : on transmet la sauvegarde avant d'écrire quoi que ce soit.
+    setStateValue("lu", { contenu: stocke, jeton: data.jeton });
+    return;
+  }
+  try {
+    // Pas encore de scénario (état du projet non choisi, ou « Nouveau projet ») : on efface la sauvegarde.
+    if (data.json === null) window.localStorage.removeItem(cle);
+    else if (data.json !== stocke) window.localStorage.setItem(cle, data.json);
+  } catch (e) { /* quota dépassé ou stockage refusé : la sauvegarde manuelle (.json) reste possible */ }
+}
+"""
+_memoire_navigateur = st.components.v2.component("memoire_navigateur", js=_JS_MEMOIRE)
+
+
+def _restaurer_memoire() -> None:
+    """Reçoit la sauvegarde lue dans le navigateur, avant la création des widgets."""
+    lu = (st.session_state.get("memoire_navigateur") or {}).get("lu") or {}
+    if lu.get("jeton") != st.session_state.get("jeton_memoire") or st.session_state.get("memoire_prete"):
+        return
+    st.session_state["memoire_prete"] = True
+    if not lu.get("contenu"):
+        return
+    try:
+        _appliquer_scenario(Scenario.depuis_json(lu["contenu"]))
+    except ValueError:
+        return  # sauvegarde illisible : on repart des valeurs par défaut
+    st.session_state["memoire_restauree"] = True
+
+
+def _nouveau_projet() -> None:
+    """Efface toutes les saisies ; la sauvegarde du navigateur est remplacée par les valeurs par défaut."""
+    garder = {"jeton_memoire", "memoire_prete", "memoire_navigateur"}
+    for cle in [c for c in st.session_state if c not in garder]:
+        del st.session_state[cle]
+
+
+def _sauvegarder_dans_le_navigateur(json_scenario: str | None) -> None:
+    """Monte le composant de sauvegarde : à appeler à chaque exécution, y compris avant un ``st.stop()``,
+    sinon la sauvegarde ne serait jamais relue."""
+    _memoire_navigateur(
+        key="memoire_navigateur",
+        data={
+            "cle": CLE_MEMOIRE,
+            "jeton": st.session_state.setdefault("jeton_memoire", uuid.uuid4().hex),
+            "pret": bool(st.session_state.get("memoire_prete")),
+            "json": json_scenario,
+        },
+        on_lu_change=_restaurer_memoire,
+        height=0,
+    )
 
 
 def _saisir_vacances(departement: Departement | None) -> tuple[tuple[int, int], tuple[int, int]] | None:
@@ -221,6 +290,13 @@ with st.sidebar:
     if LOGO.exists():
         st.image(str(LOGO), width="stretch")
     st.header("💾 Scénario")
+    if st.session_state.pop("memoire_restauree", False):
+        st.toast("Saisies de votre dernière visite restaurées.", icon="💾")
+    st.caption(
+        "Vos saisies sont enregistrées automatiquement dans ce navigateur. Pour les retrouver sur un autre poste "
+        "ou les partager, téléchargez le scénario (.json)."
+    )
+    st.button("🗒️ Nouveau projet (tout effacer)", on_click=_nouveau_projet, width="stretch")
     st.file_uploader("Charger un scénario (.json)", type="json", key="fichier_scenario", on_change=_charger_scenario)
     if st.session_state.get("erreur_scenario"):
         st.error(st.session_state["erreur_scenario"])
@@ -294,6 +370,7 @@ with col_date:
 
 if etat is None:
     st.info("Sélectionnez l'état de votre projet pour afficher les étapes.")
+    _sauvegarder_dans_le_navigateur(None)
     st.stop()
 
 onglet_plan, onglet_budget = st.tabs(["📅 Planification", "💶 Budget et financement"])
@@ -918,3 +995,5 @@ with onglet_budget:
         )
     else:
         st.info("Saisissez le montant estimé des travaux pour obtenir l'échéancier.")
+
+_sauvegarder_dans_le_navigateur(scenario.vers_json())

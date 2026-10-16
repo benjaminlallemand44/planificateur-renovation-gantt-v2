@@ -120,3 +120,27 @@ def test_ajout_d_un_financeur(page: Page):
     _saisir_cellule(page, 6, 0, "Programme ACTEE")
     _saisir_cellule(page, 6, 3, "9000")
     expect(page.get_by_text(re.compile(r"Aides publiques \(1,8 % du HT\)"))).to_be_visible()
+
+
+def test_sauvegarde_automatique_dans_le_navigateur(page: Page):
+    """Les saisies reviennent après un rechargement de la page ; « Nouveau projet » les efface."""
+    nom = page.get_by_role("textbox", name="Nom du projet")
+    nom.fill("École Jules Ferry")
+    nom.press("Enter")
+    _choisir_etat(page, "Nous venons de sélectionner notre équipe de maitrise d'oeuvre")
+    _ouvrir_budget(page, 750_000)
+
+    page.reload()
+    page.wait_for_selector('[data-testid="stSelectbox"]', timeout=30_000)
+    _attendre_calcul(page)
+    expect(page.get_by_role("textbox", name="Nom du projet")).to_have_value("École Jules Ferry")
+    page.get_by_role("tab", name="💶 Budget et financement").click()
+    expect(page.get_by_role("spinbutton", name="Montant estimé des travaux")).to_have_value("750000")
+
+    page.get_by_role("button", name="Nouveau projet (tout effacer)").click()
+    _attendre_calcul(page)
+    expect(page.get_by_role("textbox", name="Nom du projet")).to_have_value("")
+    page.reload()
+    page.wait_for_selector('[data-testid="stSelectbox"]', timeout=30_000)
+    _attendre_calcul(page)
+    expect(page.get_by_role("textbox", name="Nom du projet")).to_have_value("")
