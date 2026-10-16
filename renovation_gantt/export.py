@@ -23,6 +23,7 @@ from .phases import (
     phases_pour_etat,
 )
 from .planning import Planning, calculer_planning
+from .territoires import CalendrierEte
 
 VERSION_SCENARIO = 1
 
@@ -150,6 +151,10 @@ class Scenario:
     batiment_scolaire: bool = False
     fenetre_travaux: FenetreTravaux = FenetreTravaux.AUCUNE
     nom_projet: str = ""
+    region: str = ""
+    departement: str = ""  # code du département (« 44 », « 2A », « 974 »…)
+    # Dates des vacances d'été saisies à la main : ((mois, jour) du début, (mois, jour) de la rentrée).
+    ete_personnalise: tuple[tuple[int, int], tuple[int, int]] | None = None
     budget: Budget = field(default_factory=Budget)
 
     def appliquer(self, phases: list[Phase]) -> list[Phase]:
@@ -175,6 +180,7 @@ class Scenario:
             self.treve_semaines,
             self.financement_apres,
             fenetre_travaux=self.fenetre_travaux if self.batiment_scolaire else FenetreTravaux.AUCUNE,
+            calendrier_ete=CalendrierEte(personnalise=self.ete_personnalise),
         )
 
     def vers_json(self) -> str:
@@ -196,6 +202,11 @@ class Scenario:
                 "batiment_scolaire": self.batiment_scolaire,
                 "fenetre_travaux": self.fenetre_travaux.name,
                 "nom_projet": self.nom_projet,
+                "region": self.region,
+                "departement": self.departement,
+                "ete_personnalise": [list(self.ete_personnalise[0]), list(self.ete_personnalise[1])]
+                if self.ete_personnalise
+                else None,
                 "budget": self.budget.vers_dict(),
             },
             ensure_ascii=False,
@@ -227,7 +238,20 @@ class Scenario:
                 batiment_scolaire=bool(donnees.get("batiment_scolaire", False)),
                 fenetre_travaux=FenetreTravaux[donnees.get("fenetre_travaux", "AUCUNE")],
                 nom_projet=donnees.get("nom_projet") or "",
+                region=donnees.get("region") or "",
+                departement=donnees.get("departement") or "",
+                ete_personnalise=_lire_ete(donnees.get("ete_personnalise")),
                 budget=Budget.depuis_dict(donnees.get("budget") or {}),
             )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ValueError(f"Fichier de scénario invalide : {exc}") from exc
+
+
+def _lire_ete(valeur) -> tuple[tuple[int, int], tuple[int, int]] | None:
+    """Lit des dates de vacances personnalisées ; les valeurs invalides sont ignorées."""
+    if not valeur:
+        return None
+    (m1, j1), (m2, j2) = valeur
+    date(2024, int(m1), int(j1))  # lève ValueError si la date est impossible (année bissextile : 29/02 accepté)
+    date(2024, int(m2), int(j2))
+    return (int(m1), int(j1)), (int(m2), int(j2))

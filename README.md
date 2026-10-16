@@ -24,12 +24,22 @@ pytest
 ruff check . && ruff format --check .
 ```
 
+Tests dans un vrai navigateur (saisie des tableaux, exports, enregistrement / rechargement d'un scénario) :
+
+```bash
+playwright install chromium
+pytest tests_navigateur
+```
+
 Déploiement sur [Streamlit Community Cloud](https://share.streamlit.io) : choisir ce dépôt et le
 fichier `app.py`.
 
 ## Fonctionnalités
 
 - **5 états de départ** du projet : de « pas encore d'audit » à « MOE sélectionnée ».
+- **Région et département** : ils nomment les lignes « Région » et « Département » du plan de financement et
+  fixent le calendrier scolaire. En métropole, les vacances d'été sont les mêmes pour les zones A, B et C (les zones
+  ne jouent que pour l'hiver et le printemps) ; pour la Corse et l'outre-mer, les dates se saisissent à la main.
 - **Durées modifiables** (en semaines), avec les minimums réglementaires (APS ≥ 3, APD ≥ 6, PRO ≥ 4).
 - **Délais de validation du maître d'ouvrage** affichés en orange, et modifiables (option de la barre latérale).
 - **Dossiers de financement** (DETR, DSIL, Fonds vert…) montés après l'APD (ou dès le début) : les marchés de
@@ -38,7 +48,7 @@ fichier `app.py`.
   l'attend.
 - **Attentes visibles** (en jaune) quand un prérequis n'est pas prêt : autorisation, financement, CT/CSPS.
 - **Bâtiment scolaire** : l'outil demande si le bâtiment est scolaire et propose de caler les travaux sur les
-  vacances d'été (démarrage au début de l'été, ou travaux uniquement l'été, sur plusieurs étés si nécessaire).
+  vacances d'été, aux dates officielles du calendrier scolaire (démarrage au début de l'été, ou travaux uniquement l'été, sur plusieurs étés si nécessaire).
   Il indique alors combien de semaines il faudrait gagner en amont pour démarrer un été plus tôt.
 - **Garantie de parfait achèvement** : un an après la réception, affichée sans allonger la durée du projet.
 - **Autorisation d'urbanisme** (DP, PC, PC d'un ERP, autorisation de travaux ERP) avec son **délai d'instruction
@@ -50,7 +60,7 @@ fichier `app.py`.
 - **Gantt mis à jour en direct** avec un bandeau par catégorie, les jalons clés (décision des élus,
   MOE recrutée, dépôt du PC/DP, marchés signés, réception, fin du projet) et une ligne « aujourd'hui ».
 - **Indicateurs** : date de fin, durée totale, part des délais de validation.
-- **Exports** : **PDF A4 paysage prêt à présenter** (Gantt, synthèse, jalons, détail des phases),
+- **Exports** : **PDF A4 paysage prêt à présenter** (Gantt, synthèse, jalons, détail des phases, budget et financement),
   Excel (feuilles Résumé, Planning, Jalons), CSV (compatible Excel FR), **jalons au format agenda (.ics)** pour
   Outlook ou Google Agenda, et image du Gantt (icône 📷).
 - **Scénarios** : enregistrer ses paramètres (planning et budget) en JSON et les recharger plus tard.
@@ -69,7 +79,11 @@ fichier `app.py`.
 - **Échéancier budgétaire** par année (autorisation de programme et crédits de paiement) : dépenses calées sur le
   Gantt, aides (acompte au démarrage des travaux, solde après la réception), FCTVA selon le régime N, N+1 ou N+2,
   solde cumulé et **besoin de financement maximal**.
-- **Export Excel** (synthèse, coût, plan de financement, échéancier) ; le budget est enregistré dans le scénario JSON.
+- **Hypothèses de trésorerie** modifiables : délai de paiement (30 jours, CCP R2192-10), avance aux entreprises
+  (5 %), retenue de garantie (5 %, libérée un an après la réception), versement des aides en avance, acomptes au
+  prorata des dépenses et solde après la réception.
+- **Export Excel** (synthèse, coût, plan de financement, échéancier), **pages budget dans le PDF** ; le budget est
+  enregistré dans le scénario JSON.
 
 ## Ce qui change par rapport à la v1
 
@@ -81,7 +95,7 @@ fichier `app.py`.
 | VISA et DET absents du glossaire | Glossaire complet |
 | Pas de bandeau ni de délai MO pour l'AMO | Bandeau AMO et délai de validation |
 | Gantt effacé à chaque modification (bouton) | Gantt recalculé en direct |
-| Tests cassés (modules `config`/`gantt` inexistants) | 121 tests pytest, dont des tests de l'interface (`AppTest`) |
+| Tests cassés (modules `config`/`gantt` inexistants) | 134 tests pytest, dont des tests de l'interface (`AppTest`), et 5 parcours dans un vrai navigateur (Playwright) |
 | README non à jour | README, CI GitHub Actions (Python 3.11 à 3.14), ruff |
 | Pas d'export ni de date de fin | Excel, CSV, JSON, jalons, indicateurs |
 
@@ -96,9 +110,11 @@ renovation_gantt/
 ├── budget.py               Coût de l'opération, plan de financement, FCTVA, échéancier
 ├── export.py               Excel / CSV / agenda .ics / scénarios JSON
 ├── excel.py                Mise en forme des classeurs (largeurs, neutralisation des formules)
+├── territoires.py          Régions, départements, zones et vacances d'été
 ├── saisie.py               Bornage des valeurs lues dans un scénario
 └── pdf.py                  Export PDF (Gantt matplotlib + mise en page fpdf2)
 tests/                      Tests pytest
+tests_navigateur/           Parcours de bout en bout dans Chromium (Playwright)
 images/                     Logo ACTEE
 ```
 

@@ -5,6 +5,7 @@ import pytest
 from renovation_gantt.export import Scenario, planning_vers_ics
 from renovation_gantt.phases import EtatProjet, FenetreTravaux
 from renovation_gantt.planning import TYPE_PHASE, prochain_ete
+from renovation_gantt.territoires import CalendrierEte
 
 DEBUT = date(2026, 10, 13)
 
@@ -12,10 +13,10 @@ DEBUT = date(2026, 10, 13)
 @pytest.mark.parametrize(
     ("jour", "attendu"),
     [
-        (date(2027, 3, 1), date(2027, 7, 6)),
+        (date(2027, 3, 1), date(2027, 7, 3)),  # calendrier scolaire 2026-2027
         (date(2027, 7, 20), date(2027, 7, 20)),  # encore plus de deux semaines de vacances
-        (date(2027, 8, 25), date(2028, 7, 6)),  # trop tard : été suivant
-        (date(2027, 10, 1), date(2028, 7, 6)),
+        (date(2027, 8, 25), date(2028, 7, 4)),  # trop tard : été suivant
+        (date(2027, 10, 1), date(2028, 7, 4)),
     ],
 )
 def test_prochain_ete(jour, attendu):
@@ -35,7 +36,7 @@ def test_les_travaux_demarrent_a_l_ete():
     travaux = _travaux(p)
     assert len(travaux) == 1
     debut = travaux.iloc[0]["Debut"]
-    assert (debut.month, debut.day) == (7, 6)
+    assert debut == CalendrierEte().vacances(debut.year)[0]
     assert any(a.motif == "début des vacances d'été" for a in p.attentes)
     assert p.gain_pour_ete_precedent_jours > 0
 

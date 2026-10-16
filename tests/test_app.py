@@ -59,7 +59,7 @@ def test_onglet_budget():
     from renovation_gantt.budget import Financeur
 
     at = AppTest.from_file(APP, default_timeout=30)
-    at.session_state["financeurs"] = [Financeur("DETR", 50), Financeur("Région", 40)]
+    at.session_state["financeurs_base"] = [Financeur("DETR", 50), Financeur("Région", 40)]
     at.run()
     at.selectbox(key="etat").set_value(EtatProjet.SANS_AUDIT).run()
     at.number_input(key="travaux_ht").set_value(800_000).run()
@@ -89,3 +89,27 @@ def test_rechargement_du_package_apres_mise_a_jour():
         for nom in [n for n in sys.modules if n.split(".")[0] == "renovation_gantt"]:
             del sys.modules[nom]
         sys.modules.update(originaux)
+
+
+def test_forfaits_suivent_l_etat_du_projet_sauf_saisie():
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    at.selectbox(key="etat").set_value(EtatProjet.SANS_AUDIT).run()
+    assert at.number_input(key="poste_ETUDES").value == 15_000
+    assert at.number_input(key="poste_AMO").value == 0
+    at.selectbox(key="etat").set_value(EtatProjet.AUDIT_RECU).run()
+    assert at.number_input(key="poste_AMO").value == 20_000  # l'AMO entre au planning
+    at.number_input(key="poste_AMO").set_value(35_000).run()
+    at.selectbox(key="etat").set_value(EtatProjet.MOE_SELECTIONNEE).run()
+    assert at.number_input(key="poste_ETUDES").value == 0  # plus d'études préalables au planning
+    assert at.number_input(key="poste_AMO").value == 35_000  # saisie conservée
+
+
+def test_region_departement_et_financeurs():
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    at.selectbox(key="region").set_value("Pays de la Loire").run()
+    at.selectbox(key="departement").set_value("44").run()
+    at.selectbox(key="etat").set_value(EtatProjet.MOE_SELECTIONNEE).run()
+    assert not at.exception
+    noms = [f.nom for f in at.session_state["financeurs"]]
+    assert "Région : Pays de la Loire" in noms
+    assert "Département : Loire-Atlantique (44)" in noms

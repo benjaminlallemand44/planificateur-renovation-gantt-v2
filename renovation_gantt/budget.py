@@ -9,8 +9,8 @@ from __future__ import annotations
 import io
 import math
 from collections import defaultdict
-from dataclasses import dataclass, field
-from datetime import date
+from dataclasses import dataclass, field, replace
+from datetime import date, timedelta
 from enum import Enum
 from functools import cached_property
 
@@ -84,6 +84,11 @@ REPARTITION_MOE = {
     "AOR": 6,
 }
 
+# Postes réglés aux entreprises de travaux (avance et retenue de garantie s'y appliquent).
+POSTES_MARCHES_TRAVAUX = ("TRAVAUX", "ALEAS", "REVISION")
+# Délai global de paiement des collectivités : 30 jours (code de la commande publique, art. R2192-10).
+DELAI_PAIEMENT_JOURS = 30
+
 # Fonds de compensation de la TVA : taux en vigueur depuis 2015, à vérifier selon la loi de finances.
 TAUX_FCTVA_DEFAUT = 16.404
 # Plafond des aides publiques : le maître d'ouvrage apporte au moins 20 % (CGCT, art. L1111-10).
@@ -128,6 +133,25 @@ FINANCEURS_DEFAUT = [
 ]
 
 
+def nommer_collectivites(financeurs: list[Financeur], region: str = "", departement: str = "") -> list[Financeur]:
+    """Précise la Région et le Département dans les lignes génériques du plan de financement.
+
+    Seules les lignes « Région » / « Département » et celles déjà nommées automatiquement sont renommées :
+    un libellé saisi par l'utilisateur est conservé."""
+
+    def automatique(nom: str, prefixe: str) -> bool:
+        return nom == prefixe or nom.startswith(f"{prefixe} : ")
+
+    resultat = []
+    for f in financeurs:
+        if region and automatique(f.nom, "Région"):
+            f = replace(f, nom=f"Région : {region}")
+        elif departement and automatique(f.nom, "Département"):
+            f = replace(f, nom=f"Département : {departement}")
+        resultat.append(f)
+    return resultat
+
+
 def postes_par_defaut(ids_phases: set[str]) -> dict[str, float]:
     """Valeurs par défaut des postes, en écartant ceux dont la phase n'est pas au planning."""
     valeurs = {p.id: p.valeur for p in POSTES}
@@ -147,9 +171,15 @@ class Budget:
     financeurs: list[Financeur] = field(default_factory=lambda: list(FINANCEURS_DEFAUT))
     taux_fctva: float = TAUX_FCTVA_DEFAUT
     regime_fctva: RegimeFCTVA = RegimeFCTVA.N1
-    # Part des aides versée au démarrage des travaux ; le solde l'est après la réception.
+    # Versement des aides : avance au démarrage des travaux, solde après la réception, et entre les deux des
+    # acomptes au fil des dépenses justifiées.
     acompte_aides: float = 30.0
     mois_solde_apres_reception: int = 3
+    solde_aides: float = 20.0
+    # Paiement des entreprises et prestataires.
+    delai_paiement_jours: int = DELAI_PAIEMENT_JOURS
+    avance_entreprises: float = 5.0  # % des marchés de travaux versé au démarrage, puis récupéré
+    retenue_garantie: float = 5.0  # % des marchés de travaux retenu jusqu'à la fin de la GPA
 
     # ------------------------------------------------------------------ coûts
 
@@ -229,20 +259,51 @@ class Budget:
     # -------------------------------------------------- échéancier par année
 
     def echeancier(self, planning: Planning) -> pd.DataFrame:
-        """Dépenses TTC, aides, FCTVA et solde par année budgétaire, calés sur le planning."""
+        """Dépenses TTC, aides, FCTVA et solde par année budgétaire, calés sur le planning.
+
+        Les factures sont payées ``delai_paiement_jours`` après le service fait. Pour les marchés de travaux :
+        avance versée au démarrage puis récupérée sur les paiements suivants, retenue de garantie libérée à la
+        fin de la garantie de parfait achèvement. Aides : avance au démarrage des travaux, acomptes au prorata
+        des dépenses de chaque année, solde après la réception.
+        """
+        decalage = timedelta(days=self.delai_paiement_jours)
+        debut_travaux, reception = _debut_travaux_et_reception(planning)
         depenses: dict[int, float] = defaultdict(float)
         eligibles: dict[int, float] = defaultdict(float)
-        for ligne in self._couts.itertuples():
-            for annee, montant in _repartir(ligne.TTC, fenetres(planning, ligne.Id)).items():
-                depenses[annee] += montant
-                if ligne.TVA > 0:
-                    eligibles[annee] += montant
 
+        def payer(annee: int, montant: float, soumis_tva: bool) -> None:
+            depenses[annee] += montant
+            if soumis_tva:
+                eligibles[annee] += montant
+
+        for ligne in self._couts.itertuples():
+            montant, soumis_tva = ligne.TTC, ligne.TVA > 0
+            if ligne.Id in POSTES_MARCHES_TRAVAUX:
+                avance = montant * self.avance_entreprises / 100
+                retenue = montant * self.retenue_garantie / 100
+                payer((debut_travaux + decalage).year, avance, soumis_tva)
+                payer((_ajouter_mois(reception, 12) + decalage).year, retenue, soumis_tva)
+                montant -= avance + retenue
+            periodes = [(d + decalage, f + decalage, p) for d, f, p in fenetres(planning, ligne.Id)]
+            for annee, part in _repartir(montant, periodes).items():
+                payer(annee, part, soumis_tva)
+
+        acompte = min(self.acompte_aides, 100.0) / 100
+        solde = min(self.solde_aides, 100.0 - 100 * acompte) / 100
         recettes_aides: dict[int, float] = defaultdict(float)
-        debut_travaux, reception = _debut_travaux_et_reception(planning)
-        solde = _ajouter_mois(reception, self.mois_solde_apres_reception)
-        recettes_aides[debut_travaux.year] += self.aides * self.acompte_aides / 100
-        recettes_aides[solde.year] += self.aides * (1 - self.acompte_aides / 100)
+        recettes_aides[debut_travaux.year] += self.aides * acompte
+        recettes_aides[_ajouter_mois(reception, self.mois_solde_apres_reception).year] += self.aides * solde
+        # Les acomptes ne sont versés qu'une fois l'aide attribuée, sur les dépenses à partir du démarrage des
+        # travaux (les études antérieures sont couvertes par l'avance et le solde).
+        assiette = {a: m for a, m in depenses.items() if a >= debut_travaux.year}
+        total_assiette = sum(assiette.values())
+        acomptes = self.aides * (1 - acompte - solde)
+        if total_assiette > 0:
+            for annee, montant in assiette.items():
+                recettes_aides[annee] += acomptes * montant / total_assiette
+        else:
+            # Aucune dépense après le démarrage des travaux : la part des acomptes est versée avec le solde.
+            recettes_aides[_ajouter_mois(reception, self.mois_solde_apres_reception).year] += acomptes
 
         fctva: dict[int, float] = defaultdict(float)
         for annee, montant in eligibles.items():
@@ -278,6 +339,10 @@ class Budget:
             "regime_fctva": self.regime_fctva.name,
             "acompte_aides": self.acompte_aides,
             "mois_solde_apres_reception": self.mois_solde_apres_reception,
+            "solde_aides": self.solde_aides,
+            "delai_paiement_jours": self.delai_paiement_jours,
+            "avance_entreprises": self.avance_entreprises,
+            "retenue_garantie": self.retenue_garantie,
         }
 
     @classmethod
@@ -301,6 +366,10 @@ class Budget:
             regime_fctva=RegimeFCTVA[donnees.get("regime_fctva", "N1")],
             acompte_aides=float(donnees.get("acompte_aides", 30)),
             mois_solde_apres_reception=int(donnees.get("mois_solde_apres_reception", 3)),
+            solde_aides=_nombre_borne(donnees.get("solde_aides", 20), 0.0, 100.0),
+            delai_paiement_jours=int(_nombre_borne(donnees.get("delai_paiement_jours", DELAI_PAIEMENT_JOURS), 0, 120)),
+            avance_entreprises=_nombre_borne(donnees.get("avance_entreprises", 5), 0.0, 30.0),
+            retenue_garantie=_nombre_borne(donnees.get("retenue_garantie", 5), 0.0, 5.0),
         )
 
 

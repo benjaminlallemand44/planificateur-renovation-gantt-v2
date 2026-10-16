@@ -115,3 +115,74 @@ def test_export_excel_budget():
     contenu = budget_vers_excel(Budget(travaux_ht=400_000, financeurs=[Financeur("DETR", 30)]), planning)
     feuilles = pd.read_excel(io.BytesIO(contenu), sheet_name=None)
     assert list(feuilles) == ["Synthèse", "Coût de l'opération", "Plan de financement", "Échéancier"]
+
+
+def _planning_moe():
+    return Scenario(EtatProjet.MOE_SELECTIONNEE, DEBUT, 12).planning()
+
+
+def test_retenue_de_garantie_liberee_apres_la_gpa():
+    planning = _planning_moe()
+    sans = Budget(travaux_ht=1_000_000, retenue_garantie=0).echeancier(planning).set_index("Année")
+    avec = Budget(travaux_ht=1_000_000, retenue_garantie=5).echeancier(planning).set_index("Année")
+    reception = next(j.date for j in planning.jalons if j.nom == "Réception des travaux")
+    annee_liberation = (reception.replace(year=reception.year + 1)).year
+    assert avec["Dépenses TTC"].sum() == pytest.approx(sans["Dépenses TTC"].sum(), abs=1)
+    assert avec.loc[annee_liberation, "Dépenses TTC"] > sans.loc[annee_liberation, "Dépenses TTC"]
+
+
+def test_avance_aux_entreprises_versee_au_demarrage():
+    # Date de départ choisie pour que les travaux soient à cheval sur deux années civiles.
+    planning = next(
+        p
+        for mois in range(1, 13)
+        if (p := Scenario(EtatProjet.MOE_SELECTIONNEE, date(2026, mois, 1), 12).planning())
+        and len({d.year for d in p.taches.loc[p.taches["Id"] == "DET", ["Debut", "Fin"]].values.ravel()}) == 2
+    )
+    sans = Budget(travaux_ht=1_000_000, avance_entreprises=0, retenue_garantie=0).echeancier(planning)
+    avec = Budget(travaux_ht=1_000_000, avance_entreprises=20, retenue_garantie=0).echeancier(planning)
+    debut = planning.taches.loc[planning.taches["Id"] == "DET", "Debut"].min()
+    s, a = sans.set_index("Année"), avec.set_index("Année")
+    assert a.loc[debut.year, "Dépenses TTC"] > s.loc[debut.year, "Dépenses TTC"]
+    assert a["Dépenses TTC"].sum() == pytest.approx(s["Dépenses TTC"].sum(), abs=1)
+
+
+def test_aides_avance_acomptes_et_solde():
+    planning = _planning_moe()
+    b = Budget(travaux_ht=800_000, financeurs=[Financeur("DETR", 40)], acompte_aides=30, solde_aides=20)
+    e = b.echeancier(planning)
+    assert e["Aides"].sum() == pytest.approx(b.aides, abs=1)
+    # Acomptes au fil des dépenses : des aides sont perçues au moins deux années différentes.
+    assert (e["Aides"] > 0).sum() >= 2
+    # Avance et solde à 100 % : plus d'acomptes intermédiaires.
+    e2 = Budget(travaux_ht=800_000, financeurs=[Financeur("DETR", 40)], acompte_aides=60, solde_aides=60).echeancier(
+        planning
+    )
+    assert e2["Aides"].sum() == pytest.approx(b.aides, abs=1)
+
+
+def test_delai_de_paiement_decale_les_depenses():
+    planning = _planning_moe()
+    immediat = Budget(travaux_ht=500_000, delai_paiement_jours=0).echeancier(planning)
+    a_30_jours = Budget(travaux_ht=500_000, delai_paiement_jours=30).echeancier(planning)
+    assert immediat["Dépenses TTC"].sum() == pytest.approx(a_30_jours["Dépenses TTC"].sum(), abs=1)
+    premiere = immediat["Année"].min()
+    assert (
+        a_30_jours.set_index("Année").loc[premiere, "Dépenses TTC"]
+        < immediat.set_index("Année").loc[premiere, "Dépenses TTC"]
+    )
+
+
+def test_echeancier_sans_travaux():
+    planning = Scenario(EtatProjet.SANS_AUDIT, DEBUT, 12).planning()
+    b = Budget(travaux_ht=0, financeurs=[Financeur("ACTEE", montant=5_000)])
+    e = b.echeancier(planning)
+    assert e["Aides"].sum() == pytest.approx(5_000)
+    assert e["Dépenses TTC"].sum() == pytest.approx(b.total_ttc, abs=1)
+
+
+def test_pas_d_acompte_d_aide_avant_les_travaux():
+    planning = Scenario(EtatProjet.SANS_AUDIT, DEBUT, 12).planning()
+    debut_travaux = planning.taches.loc[planning.taches["Id"] == "DET", "Debut"].min()
+    e = Budget(travaux_ht=600_000, financeurs=[Financeur("DETR", 30)]).echeancier(planning)
+    assert (e.loc[e["Année"] < debut_travaux.year, "Aides"] == 0).all()

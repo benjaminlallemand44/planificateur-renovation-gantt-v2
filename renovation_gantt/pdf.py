@@ -22,6 +22,7 @@ from fpdf.fonts import FontFace  # noqa: E402
 from matplotlib.patches import Patch, Rectangle  # noqa: E402
 from matplotlib.transforms import blended_transform_factory  # noqa: E402
 
+from .budget import Budget  # noqa: E402
 from .charts import COULEUR_TREVE, COULEURS_TYPES, etiquettes_a_droite, libelle_bandeau  # noqa: E402
 from .export import indicateurs  # noqa: E402
 from .phases import COULEURS_GROUPES, EtatProjet, Groupe  # noqa: E402
@@ -42,7 +43,9 @@ def planning_vers_pdf(
     logo: Path | None = None,
     edition: date | None = None,
     nom_projet: str = "",
+    budget: Budget | None = None,
 ) -> bytes:
+    """PDF du planning ; une page « Budget et plan de financement » s'ajoute si un budget est renseigné."""
     if planning.taches.empty:
         raise ValueError("Le planning ne contient aucune tâche à exporter.")
     edition = edition or date.today()
@@ -84,7 +87,75 @@ def planning_vers_pdf(
             )
         )
     _tableau(pdf, lignes, (125, 45, 30, 30, 25))
+
+    if budget is not None and budget.total_ttc > 0:
+        _pages_budget(pdf, budget, planning)
     return bytes(pdf.output())
+
+
+def _euros(montant: float) -> str:
+    return f"{montant:,.0f} €".replace(",", "\u00a0")
+
+
+def _pct(valeur: float) -> str:
+    return f"{valeur:.1f} %".replace(".", ",")
+
+
+def _pages_budget(pdf: FPDF, budget: Budget, planning: Planning) -> None:
+    pdf.add_page()
+    _titre_section(pdf, "Coût de l'opération")
+    couts = budget.couts()
+    lignes = [("Poste", "HT", "TVA", "TTC")]
+    lignes += [(r.Poste, _euros(r.HT), _euros(r.TVA), _euros(r.TTC)) for r in couts.itertuples() if r.HT]
+    lignes.append(("Total", _euros(budget.total_ht), _euros(budget.total_tva), _euros(budget.total_ttc)))
+    _tableau(pdf, lignes, (110, 32, 32, 32), alignements=("LEFT", "RIGHT", "RIGHT", "RIGHT"))
+    pdf.ln(4)
+
+    _titre_section(pdf, "Plan de financement")
+    lignes = [("Financeur", "Statut", "Montant", "Part du coût HT")]
+    base = budget.total_ht
+    for f in budget.financeurs:
+        if f.aide(base):
+            nom = texte_sans_emoji(f.nom) + ("" if f.public else " (aide privée)")
+            lignes.append((nom, f.statut.value, _euros(f.aide(base)), _pct(100 * f.aide(base) / base)))
+    lignes += [
+        ("FCTVA attendu", "", _euros(budget.fctva), ""),
+        ("Reste à charge net de la collectivité", "", _euros(budget.reste_a_charge), ""),
+    ]
+    _tableau(pdf, lignes, (110, 40, 32, 32), alignements=("LEFT", "LEFT", "RIGHT", "RIGHT"))
+    pdf.set_font("DejaVu", "", 8)
+    pdf.set_text_color(*(200, 30, 30) if budget.depasse_plafond else (60, 60, 60))
+    pdf.multi_cell(
+        0,
+        4.5,
+        f"Aides publiques : {_pct(budget.taux_aides_publiques)} du coût HT "
+        + (
+            "— au-delà du plafond de 80 % (participation minimale de 20 % du maître d'ouvrage, CGCT art. L1111-10)."
+            if budget.depasse_plafond
+            else "(plafond : 80 %, CGCT art. L1111-10)."
+        ),
+    )
+    pdf.ln(3)
+
+    echeancier = budget.echeancier(planning)
+    if not echeancier.empty:
+        _titre_section(pdf, "Échéancier budgétaire (crédits de paiement)")
+        lignes = [("Année", "Dépenses TTC", "Aides", "FCTVA", "Solde", "Cumul")]
+        lignes += [
+            (str(int(r.Année)), *(_euros(v) for v in (r[2], r.Aides, r.FCTVA, r.Solde, r.Cumul)))
+            for r in echeancier.itertuples()
+        ]
+        _tableau(pdf, lignes, (25, 35, 35, 35, 35, 35), alignements=("LEFT",) + ("RIGHT",) * 5)
+        pdf.set_font("DejaVu", "", 8)
+        pdf.set_text_color(60, 60, 60)
+        pdf.multi_cell(
+            0,
+            4.5,
+            f"Besoin de financement maximal : {_euros(-echeancier['Cumul'].min())}. Hypothèses : factures payées "
+            f"à {budget.delai_paiement_jours} jours, avance de {_pct(budget.avance_entreprises)} et retenue de "
+            f"garantie de {_pct(budget.retenue_garantie)} sur les marchés de travaux, aides versées pour "
+            f"{_pct(budget.acompte_aides)} au démarrage des travaux et {_pct(budget.solde_aides)} après la réception.",
+        )
 
 
 class _Document(FPDF):
@@ -127,7 +198,12 @@ def _titre_section(pdf: FPDF, titre: str) -> None:
     pdf.cell(0, 7, titre, new_x="LMARGIN", new_y="NEXT")
 
 
-def _tableau(pdf: FPDF, lignes: list[tuple[str, ...]], largeurs: tuple[int, ...]) -> None:
+def _tableau(
+    pdf: FPDF,
+    lignes: list[tuple[str, ...]],
+    largeurs: tuple[int, ...],
+    alignements: tuple[str, ...] | None = None,
+) -> None:
     pdf.set_font("DejaVu", "", 8)
     pdf.set_text_color(0, 0, 0)
     entete = FontFace(emphasis="BOLD", fill_color=(230, 233, 250))
@@ -141,8 +217,8 @@ def _tableau(pdf: FPDF, lignes: list[tuple[str, ...]], largeurs: tuple[int, ...]
     ) as table:
         for ligne in lignes:
             row = table.row()
-            for valeur in ligne:
-                row.cell(str(valeur))
+            for i, valeur in enumerate(ligne):
+                row.cell(str(valeur), align=alignements[i] if alignements else None)
 
 
 # --------------------------------------------------------------------------

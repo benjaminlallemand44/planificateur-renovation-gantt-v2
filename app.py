@@ -40,6 +40,7 @@ _recharger_le_package_si_modifie()
 
 from renovation_gantt import __version__
 from renovation_gantt.budget import (
+    DELAI_PAIEMENT_JOURS,
     PLAFOND_AIDES_PUBLIQUES,
     POSTES,
     TAUX_FCTVA_DEFAUT,
@@ -49,6 +50,7 @@ from renovation_gantt.budget import (
     RegimeFCTVA,
     StatutAide,
     budget_vers_excel,
+    nommer_collectivites,
     postes_par_defaut,
 )
 from renovation_gantt.charts import figure_gantt
@@ -70,6 +72,7 @@ from renovation_gantt.phases import (
     phases_pour_etat,
 )
 from renovation_gantt.saisie import borner
+from renovation_gantt.territoires import DEPARTEMENTS, REGIONS, CalendrierEte, Departement, departements_de
 
 RACINE = Path(__file__).parent
 LOGO = RACINE / "images" / "Logo_ACTEE_CMYN-HD.png"
@@ -117,6 +120,13 @@ def _charger_scenario() -> None:
     st.session_state["etat"] = scenario.etat
     st.session_state["date_debut"] = scenario.date_debut
     st.session_state["nom_projet"] = scenario.nom_projet
+    st.session_state["region"] = scenario.region or None
+    st.session_state["departement"] = scenario.departement or None
+    st.session_state["ete_personnalise_on"] = scenario.ete_personnalise is not None
+    if scenario.ete_personnalise:
+        (m1, j1), (m2, j2) = scenario.ete_personnalise
+        st.session_state["ete_debut"] = date(2000, m1, j1)
+        st.session_state["ete_rentree"] = date(2000, m2, j2)
     ajustements: list[str] = []
     budget = scenario.budget
     _borner("travaux_ht", budget.travaux_ht, 0, 10**10, "Montant des travaux", ajustements)
@@ -124,8 +134,13 @@ def _charger_scenario() -> None:
         _borner(f"poste_{id_poste}", valeur, 0.0, 10.0**9, f"Poste {id_poste}", ajustements)
     _borner("taux_fctva", budget.taux_fctva, 0.0, TAUX_FCTVA_MAX, "Taux du FCTVA", ajustements)
     st.session_state["regime_fctva"] = budget.regime_fctva
-    _borner("acompte_aides", budget.acompte_aides, 0.0, 100.0, "Acompte des aides", ajustements)
+    _borner("acompte_aides", budget.acompte_aides, 0.0, 100.0, "Avance des aides", ajustements)
+    _borner("solde_aides", budget.solde_aides, 0.0, 100.0, "Solde des aides", ajustements)
+    _borner("delai_paiement_jours", budget.delai_paiement_jours, 0, 120, "Délai de paiement", ajustements)
+    _borner("avance_entreprises", budget.avance_entreprises, 0.0, 30.0, "Avance aux entreprises", ajustements)
+    _borner("retenue_garantie", budget.retenue_garantie, 0.0, 5.0, "Retenue de garantie", ajustements)
     st.session_state["financeurs"] = budget.financeurs
+    st.session_state["financeurs_base"] = budget.financeurs
     st.session_state.pop("editeur_financeurs", None)
     st.session_state["financement_on"] = bool(scenario.financement_semaines)
     if scenario.financement_semaines:
@@ -154,6 +169,49 @@ def _charger_scenario() -> None:
     st.session_state["erreur_scenario"] = None
     st.session_state["ajustements_scenario"] = ajustements
     st.session_state["scenario_charge"] = fichier.name
+
+
+def _saisir_vacances(departement: Departement | None) -> tuple[tuple[int, int], tuple[int, int]] | None:
+    """Affiche les dates de vacances d'été retenues et permet de les ajuster ; renvoie les dates personnalisées."""
+    annee = date.today().year + (1 if date.today().month > 8 else 0)
+    debut, rentree = CalendrierEte().vacances(annee)
+    if departement is None:
+        lieu = "Choisissez le département pour vérifier le calendrier applicable."
+    elif departement.calendrier_specifique:
+        lieu = (
+            f"⚠️ {departement.nom} a un calendrier scolaire propre (hors zones A, B, C) : "
+            "saisissez ci-dessous les dates de vos grandes vacances."
+        )
+    else:
+        lieu = (
+            f"{departement.nom} est en zone {departement.zone} : les vacances d'été sont les mêmes "
+            "dans les trois zones de métropole."
+        )
+    st.caption(
+        f"Vacances d'été {annee} (calendrier national) : du {debut:%d/%m/%Y} à la rentrée du {rentree:%d/%m/%Y}. {lieu}"
+    )
+    personnalise = st.toggle(
+        "Saisir d'autres dates de vacances",
+        key=_defaut("ete_personnalise_on", bool(departement and departement.calendrier_specifique)),
+        help="Utile pour la Corse, l'outre-mer (grandes vacances de décembre à janvier à La Réunion et à Mayotte) "
+        "ou un calendrier local. Les dates s'appliquent chaque année.",
+    )
+    if not personnalise:
+        return None
+    col_d, col_f = st.columns(2)
+    with col_d:
+        jour_debut = st.date_input(
+            "Début des vacances (jour et mois)",
+            format="DD/MM/YYYY",
+            key=_defaut("ete_debut", debut),
+        )
+    with col_f:
+        jour_rentree = st.date_input(
+            "Jour de la rentrée (jour et mois)",
+            format="DD/MM/YYYY",
+            key=_defaut("ete_rentree", rentree),
+        )
+    return (jour_debut.month, jour_debut.day), (jour_rentree.month, jour_rentree.day)
 
 
 # --------------------------------------------------------------------------
@@ -190,13 +248,38 @@ st.markdown(
     "(en **semaines**). Le diagramme de Gantt se met à jour automatiquement."
 )
 
-col_nom, col_etat, col_date = st.columns([2, 3, 1])
+col_nom, col_region, col_dep = st.columns([2, 1, 1])
 with col_nom:
     nom_projet = st.text_input(
         "Nom du projet",
         key=_defaut("nom_projet", ""),
         placeholder="Ex. : Rénovation de l'école Jules Ferry",
     )
+with col_region:
+    region = st.selectbox(
+        "Région",
+        options=REGIONS,
+        index=None,
+        placeholder="Choisir la région",
+        key="region",
+    )
+with col_dep:
+    choix_departements = departements_de(region) if region else list(DEPARTEMENTS.values())
+    if st.session_state.get("departement") not in [d.code for d in choix_departements]:
+        st.session_state["departement"] = None
+    code_departement = st.selectbox(
+        "Département",
+        options=[d.code for d in choix_departements],
+        format_func=lambda c: DEPARTEMENTS[c].libelle,
+        index=None,
+        placeholder="Choisir le département",
+        key="departement",
+    )
+departement = DEPARTEMENTS.get(code_departement) if code_departement else None
+if departement and not region:
+    region = departement.region
+
+col_etat, col_date = st.columns([3, 1])
 with col_etat:
     etat = st.selectbox(
         "Où en êtes-vous dans votre projet de rénovation énergétique ?",
@@ -297,6 +380,7 @@ with onglet_plan:
                 "les vacances d'été.",
             )
         fenetre_travaux = FenetreTravaux.AUCUNE
+        ete_personnalise = None
         if batiment_scolaire:
             with col_s2:
                 fenetre_travaux = st.radio(
@@ -304,8 +388,8 @@ with onglet_plan:
                     options=list(FenetreTravaux),
                     format_func=lambda f: f.value,
                     key=_defaut("fenetre_travaux", FenetreTravaux.DEBUT_ETE),
-                    help="Vacances d'été retenues : du 6 juillet au 31 août, à ajuster au calendrier de votre zone.",
                 )
+            ete_personnalise = _saisir_vacances(departement)
 
     phases_defaut = phases_pour_etat(etat)
     durees: dict[str, int] = {}
@@ -351,6 +435,9 @@ with onglet_plan:
         batiment_scolaire=batiment_scolaire,
         fenetre_travaux=fenetre_travaux,
         nom_projet=nom_projet,
+        region=region or "",
+        departement=code_departement or "",
+        ete_personnalise=ete_personnalise,
     )
     planning = scenario.planning()
 
@@ -411,7 +498,7 @@ with onglet_plan:
         st.subheader("⬇️ Exporter")
         st.download_button(
             "Planning PDF (à présenter)",
-            lambda: planning_vers_pdf(planning, etat, LOGO, nom_projet=nom_projet),
+            lambda: planning_vers_pdf(planning, etat, LOGO, nom_projet=nom_projet, budget=scenario.budget),
             file_name="planning_renovation.pdf",
             mime="application/pdf",
             on_click="ignore",
@@ -489,6 +576,14 @@ with onglet_budget:
     # 1. Coût de l'opération
     st.subheader("1. Coût de l'opération")
     defauts = postes_par_defaut(set(planning.taches["Id"]))
+    # Les forfaits par défaut dépendent des phases au planning (études préalables, AMO) : quand l'état du projet
+    # change, on les met à jour, sauf si l'utilisateur les a modifiés.
+    precedents = st.session_state.get("postes_auto", {})
+    for id_poste, valeur in defauts.items():
+        cle = f"poste_{id_poste}"
+        if cle in st.session_state and st.session_state[cle] == precedents.get(id_poste) != valeur:
+            st.session_state[cle] = float(valeur)
+    st.session_state["postes_auto"] = dict(defauts)
     col_t1, col_t2 = st.columns([1, 2])
     with col_t1:
         travaux_ht = st.number_input(
@@ -513,7 +608,7 @@ with onglet_budget:
                     help=poste.aide or None,
                 )
 
-    with st.expander("⚙️ FCTVA et versement des aides"):
+    with st.expander("⚙️ Trésorerie : FCTVA, versement des aides, paiement des entreprises"):
         col_v1, col_v2, col_v3 = st.columns(3)
         with col_v1:
             taux_fctva = st.number_input(
@@ -541,11 +636,63 @@ with onglet_budget:
                 max_value=100.0,
                 step=5.0,
                 key=_defaut("acompte_aides", 30.0),
-                help="Avance ou acompte ; le solde est versé environ 3 mois après la réception, sur justificatifs.",
+                help="Avance versée par les financeurs au démarrage des travaux.",
+            )
+            solde_aides = st.number_input(
+                "Aides versées en solde après la réception (%)",
+                min_value=0.0,
+                max_value=100.0,
+                step=5.0,
+                key=_defaut("solde_aides", 20.0),
+                help="Versé environ 3 mois après la réception, sur justificatifs. Le reste est versé en acomptes, "
+                "au fil des dépenses justifiées.",
+            )
+        col_p1, col_p2, col_p3 = st.columns(3)
+        with col_p1:
+            delai_paiement = st.number_input(
+                "Délai de paiement des factures (jours)",
+                min_value=0,
+                max_value=120,
+                step=5,
+                key=_defaut("delai_paiement_jours", DELAI_PAIEMENT_JOURS),
+                help="Délai global de paiement des collectivités : 30 jours (code de la commande publique, "
+                "art. R2192-10).",
+            )
+        with col_p2:
+            avance_entreprises = st.number_input(
+                "Avance aux entreprises de travaux (%)",
+                min_value=0.0,
+                max_value=30.0,
+                step=1.0,
+                key=_defaut("avance_entreprises", 5.0),
+                help="Versée au démarrage, puis récupérée sur les paiements suivants. Au moins 5 % pour les marchés "
+                "de plus de 50 000 € HT et de plus de deux mois, sauf renonciation du titulaire.",
+            )
+        with col_p3:
+            retenue_garantie = st.number_input(
+                "Retenue de garantie (%)",
+                min_value=0.0,
+                max_value=5.0,
+                step=1.0,
+                key=_defaut("retenue_garantie", 5.0),
+                help="Au plus 5 % des marchés de travaux, conservés jusqu'à la fin de la garantie de parfait "
+                "achèvement (souvent remplacée par une garantie à première demande : mettre alors 0).",
             )
 
     # 2. Plan de financement
-    financeurs_saisis: list[Financeur] = st.session_state.get("financeurs") or Budget().financeurs
+    # Le tableau modifiable part d'une base qui ne doit PAS changer d'une exécution à l'autre : si on lui
+    # redonnait le résultat modifié, Streamlit croirait à un nouveau tableau et perdrait la saisie en cours.
+    # La base n'est remplacée qu'au chargement d'un scénario ou quand les noms Région/Département changent.
+    base_financeurs: list[Financeur] = st.session_state.get("financeurs_base") or Budget().financeurs
+    dernier_resultat: list[Financeur] = st.session_state.get("financeurs") or base_financeurs
+    renommes = nommer_collectivites(
+        dernier_resultat, region or "", f"{departement.nom} ({departement.code})" if departement else ""
+    )
+    if renommes != dernier_resultat:
+        base_financeurs = renommes
+        st.session_state["financeurs_base"] = renommes
+        st.session_state.pop("editeur_financeurs", None)
+    financeurs_saisis = base_financeurs
     tableau_financeurs = pd.DataFrame(
         [
             {
@@ -566,6 +713,10 @@ with onglet_budget:
         taux_fctva=taux_fctva,
         regime_fctva=regime_fctva,
         acompte_aides=acompte_aides,
+        solde_aides=solde_aides,
+        delai_paiement_jours=int(delai_paiement),
+        avance_entreprises=avance_entreprises,
+        retenue_garantie=retenue_garantie,
     )
     couts = budget_provisoire.couts()
     with col_t2:
@@ -592,26 +743,40 @@ with onglet_budget:
         hide_index=True,
         width="stretch",
         column_config={
-            "Financeur": st.column_config.TextColumn(required=True, width="large"),
-            "Public": st.column_config.CheckboxColumn(help="Aide d'une personne publique (comptée dans le plafond)."),
-            "Taux (% du HT)": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, format="%.1f %%"),
-            "Montant (€)": st.column_config.NumberColumn(
-                min_value=0.0, format="localized", help="Prioritaire sur le taux s'il est renseigné."
+            # Valeurs par défaut : une ligne ajoutée est directement utilisable.
+            "Financeur": st.column_config.TextColumn(width="large", default="Nouveau financeur"),
+            "Public": st.column_config.CheckboxColumn(
+                help="Aide d'une personne publique (comptée dans le plafond).", default=True
             ),
-            "Statut": st.column_config.SelectboxColumn(options=[s.value for s in StatutAide], required=True),
+            "Taux (% du HT)": st.column_config.NumberColumn(
+                min_value=0.0, max_value=100.0, format="%.1f %%", default=0.0
+            ),
+            "Montant (€)": st.column_config.NumberColumn(
+                min_value=0.0, format="localized", help="Prioritaire sur le taux s'il est renseigné.", default=0.0
+            ),
+            "Statut": st.column_config.SelectboxColumn(
+                options=[s.value for s in StatutAide], default=StatutAide.A_SOLLICITER.value
+            ),
         },
     )
-    financeurs = [
-        Financeur(
-            str(ligne["Financeur"]),
-            float(ligne["Taux (% du HT)"] or 0),
-            float(ligne["Montant (€)"] or 0),
-            bool(ligne["Public"]) if pd.notna(ligne["Public"]) else True,
-            StatutAide(ligne["Statut"]) if ligne["Statut"] else StatutAide.A_SOLLICITER,
+    financeurs = []
+    for ligne in edite.fillna({"Taux (% du HT)": 0, "Montant (€)": 0}).to_dict("records"):
+        nom = str(ligne["Financeur"]).strip() if pd.notna(ligne["Financeur"]) else ""
+        taux, montant = float(ligne["Taux (% du HT)"] or 0), float(ligne["Montant (€)"] or 0)
+        if not nom and not taux and not montant:
+            continue  # ligne vide
+        financeurs.append(
+            Financeur(
+                # Une ligne chiffrée mais sans nom est conservée : l'ignorer fausserait le plan de financement.
+                nom or "Financeur sans nom",
+                taux,
+                montant,
+                bool(ligne["Public"]) if pd.notna(ligne["Public"]) else True,
+                StatutAide(ligne["Statut"])
+                if pd.notna(ligne["Statut"]) and ligne["Statut"]
+                else StatutAide.A_SOLLICITER,
+            )
         )
-        for ligne in edite.fillna({"Taux (% du HT)": 0, "Montant (€)": 0}).to_dict("records")
-        if ligne["Financeur"] and pd.notna(ligne["Financeur"])
-    ]
     st.session_state["financeurs"] = financeurs
     budget = replace(budget_provisoire, financeurs=financeurs)
     scenario = replace(scenario, budget=budget)
@@ -738,8 +903,10 @@ with onglet_budget:
         )
         st.caption(
             "Les crédits de paiement de chaque année correspondent à la colonne « Dépenses TTC ». Hypothèses : "
-            "travaux, aléas et révisions répartis sur la durée des travaux ; honoraires de maîtrise d'œuvre répartis "
-            "par élément de mission ; aides versées en acompte au démarrage des travaux et en solde après la réception."
+            "factures payées après le délai de paiement ; travaux, aléas et révisions répartis sur la durée du "
+            "chantier, avec l'avance versée au démarrage et la retenue de garantie libérée à la fin de la GPA ; "
+            "honoraires de maîtrise d'œuvre répartis par élément de mission ; aides versées en avance au démarrage "
+            "des travaux, en acomptes au fil des dépenses et en solde après la réception."
         )
         st.download_button(
             "⬇️ Budget et plan de financement (.xlsx)",

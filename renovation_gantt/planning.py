@@ -30,9 +30,7 @@ from .phases import (
     ARTICLES_INSTRUCTION,
     DEFINITION_FINANCEMENT,
     DEFINITION_GPA,
-    ETE_DEBUT,
     ETE_DEMARRAGE_TARDIF_JOURS,
-    ETE_FIN,
     MOIS_RECOURS_TIERS,
     Autorisation,
     FenetreTravaux,
@@ -40,6 +38,7 @@ from .phases import (
     Phase,
     definition_courte,
 )
+from .territoires import CalendrierEte
 
 TYPE_PHASE = "Phase"
 TYPE_DELAI_MO = "Délai MO"
@@ -138,6 +137,7 @@ def calculer_planning(
     financement_apres: str | None = None,
     gpa: bool = True,
     fenetre_travaux: FenetreTravaux = FenetreTravaux.AUCUNE,
+    calendrier_ete: CalendrierEte | None = None,
 ) -> Planning:
     """Calcule les dates de chaque phase.
 
@@ -148,7 +148,9 @@ def calculer_planning(
     ``treve_semaines`` : nombre de semaines non travaillées se terminant le 1er janvier (0 = aucune).
     ``gpa`` : affiche la garantie de parfait achèvement après la réception.
     ``fenetre_travaux`` : contrainte des vacances d'été pour les bâtiments scolaires.
+    ``calendrier_ete`` : dates des vacances d'été (calendrier national par défaut).
     """
+    calendrier_ete = calendrier_ete or CalendrierEte()
     if isinstance(date_debut, pd.Timestamp):
         date_debut = date_debut.date()
     ferme = _fermeture(treve_semaines)
@@ -213,13 +215,14 @@ def calculer_planning(
         depart = attendre(phase.prerequis, courant, phase)
         contrainte_ete = phase.id == ID_TRAVAUX and fenetre_travaux is not FenetreTravaux.AUCUNE
         if contrainte_ete:
-            fins["ETE"] = prochain_ete(depart)
+            fins["ETE"] = calendrier_ete.prochain_demarrage(depart, ETE_DEMARRAGE_TARDIF_JOURS)
             if fins["ETE"] > depart:
-                gain_ete = (depart - date(fins["ETE"].year - 1, *ETE_DEBUT)).days
+                ete_precedent = calendrier_ete.vacances(fins["ETE"].year - 1)[0]
+                gain_ete = max(0, (depart - ete_precedent).days)
             depart = attendre(("ETE",), depart, phase)
 
         if contrainte_ete and fenetre_travaux is FenetreTravaux.ETE_UNIQUEMENT:
-            segments = _segments(depart, phase.duree, lambda jour: not _en_ete(jour))
+            segments = _segments(depart, phase.duree, lambda jour: not calendrier_ete.en_vacances(jour))
         else:
             segments = [_etaler(depart, phase.duree, ferme)]
         fin_phase = segments[-1][1]
@@ -371,20 +374,11 @@ def periodes_treve(debut: date, fin: date, treve_semaines: int) -> list[tuple[da
     return periodes
 
 
-def _en_ete(jour: date) -> bool:
-    return date(jour.year, *ETE_DEBUT) <= jour < date(jour.year, *ETE_FIN)
-
-
-def prochain_ete(jour: date) -> date:
+def prochain_ete(jour: date, calendrier: CalendrierEte | None = None) -> date:
     """Date de démarrage des travaux la plus proche compatible avec les vacances d'été.
 
     Un chantier peut démarrer en cours de vacances s'il en reste au moins deux semaines."""
-    debut = date(jour.year, *ETE_DEBUT)
-    if jour <= debut:
-        return debut
-    if jour <= date(jour.year, *ETE_FIN) - timedelta(days=ETE_DEMARRAGE_TARDIF_JOURS):
-        return jour
-    return date(jour.year + 1, *ETE_DEBUT)
+    return (calendrier or CalendrierEte()).prochain_demarrage(jour, ETE_DEMARRAGE_TARDIF_JOURS)
 
 
 def _segments(debut: date, semaines: float, ferme: Callable[[date], bool]) -> list[tuple[date, date]]:
