@@ -3,7 +3,7 @@
 import hashlib
 from pathlib import Path
 
-__version__ = "2.7.0"
+__version__ = "2.8.0"
 
 
 def empreinte_sources(dossier: Path = Path(__file__).parent) -> str:

@@ -144,3 +144,29 @@ def test_sauvegarde_automatique_dans_le_navigateur(page: Page):
     page.wait_for_selector('[data-testid="stSelectbox"]', timeout=30_000)
     _attendre_calcul(page)
     expect(page.get_by_role("textbox", name="Nom du projet")).to_have_value("")
+
+
+IPHONE = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+    "Version/17.0 Mobile/15E148 Safari/604.1"
+)
+
+
+def test_affichage_smartphone(navigateur, url_app):
+    """Sur un écran de smartphone : libellés courts, réglages repliés, Gantt compact, pas de défilement horizontal."""
+    contexte = navigateur.new_context(viewport={"width": 390, "height": 844}, user_agent=IPHONE, locale="fr-FR")
+    page = contexte.new_page()
+    try:
+        page.goto(url_app)
+        page.wait_for_selector('[data-testid="stSelectbox"]', timeout=30_000)
+        _attendre_calcul(page)
+        page.locator('[data-testid="stSelectbox"]').filter(has_text="Où en êtes-vous").locator("input").first.click()
+        page.get_by_role("option", name="Équipe de MOE sélectionnée").click()
+        _attendre_calcul(page)
+        expect(page.locator(".js-plotly-plot").first).to_be_visible()
+        expect(page.locator(".js-plotly-plot").first).to_contain_text("Gantt du projet")
+        # Réglages des phases repliés : le Gantt n'est pas relégué en bas d'une très longue page.
+        expect(page.get_by_text("DIAG - Diagnostic", exact=False).first).to_be_hidden()
+        assert page.evaluate("document.documentElement.scrollWidth") <= 390
+    finally:
+        contexte.close()

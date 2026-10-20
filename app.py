@@ -81,6 +81,22 @@ ICONES_GROUPES = {Groupe.ETUDES: "📋", Groupe.AMO: "🧠", Groupe.SELECTION_MO
 
 st.set_page_config(page_title="Planificateur rénovation", page_icon="📊", layout="wide")
 
+# Smartphone : détecté par le navigateur déclaré (« Mobi » : iPhone, Android…). Sert à compacter le Gantt et à
+# replier les réglages pour que le diagramme ne soit pas relégué tout en bas de la page.
+SMARTPHONE = "Mobi" in (st.context.headers.get("User-Agent") or "")
+
+# Petits écrans : titre et indicateurs moins imposants.
+st.html(
+    """
+<style>
+@media (max-width: 640px) {
+  h1 { font-size: 1.6rem !important; }
+  [data-testid="stMetricValue"] { font-size: 1.6rem; }
+}
+</style>
+"""
+)
+
 
 def _defaut(cle: str, valeur) -> str:
     """Initialise une valeur de widget une seule fois (évite les conflits avec un scénario chargé)."""
@@ -360,7 +376,8 @@ with col_etat:
     etat = st.selectbox(
         "Où en êtes-vous dans votre projet de rénovation énergétique ?",
         options=list(EtatProjet),
-        format_func=lambda e: e.value,
+        # Sur smartphone, la liste n'affiche qu'une ligne par choix : libellés courts.
+        format_func=lambda e: e.libelle_court if SMARTPHONE else e.value,
         index=None,
         placeholder="Sélectionnez l'état de votre projet",
         key="etat",
@@ -407,7 +424,7 @@ with onglet_plan:
                 "signés avant : la signature vaut commencement d'exécution.",
             )
 
-    with st.expander("🏛️ Autorisation d'urbanisme et calendrier", expanded=True):
+    with st.expander("🏛️ Autorisation d'urbanisme et calendrier", expanded=not SMARTPHONE):
         col_a1, col_a2, col_a3 = st.columns([2, 2, 1])
         with col_a1:
             type_autorisation = st.selectbox(
@@ -473,7 +490,7 @@ with onglet_plan:
     delais: dict[str, int] = {}
 
     for groupe in [g for g in ICONES_GROUPES if any(p.groupe is g for p in phases_defaut)]:
-        with st.expander(f"{ICONES_GROUPES[groupe]} {groupe.value}", expanded=True):
+        with st.expander(f"{ICONES_GROUPES[groupe]} {groupe.value}", expanded=not SMARTPHONE):
             for phase in (p for p in phases_defaut if p.groupe is groupe):
                 colonnes = st.columns([4, 1, 1] if afficher_delais else [5, 1])
                 with colonnes[0]:
@@ -556,7 +573,7 @@ with onglet_plan:
             message += "."
         st.info(message)
 
-    st.plotly_chart(figure_gantt(planning, aujourd_hui=date.today()), width="stretch")
+    st.plotly_chart(figure_gantt(planning, aujourd_hui=date.today(), compact=SMARTPHONE), width="stretch")
 
     st.warning(
         "Vigilance (DET / AOR) : les durées de travaux et de réception sont indicatives et "
@@ -805,7 +822,12 @@ with onglet_budget:
         couts.drop(columns=["Id"]),
         hide_index=True,
         width="stretch",
-        column_config={c: st.column_config.NumberColumn(f"{c} (€)", format="localized") for c in ("HT", "TVA", "TTC")},
+        # Smartphone : le libellé du poste et le TTC seulement, pour que les montants restent visibles.
+        column_order=["Poste", "TTC"] if SMARTPHONE else None,
+        column_config={
+            "Poste": st.column_config.TextColumn(width="medium" if SMARTPHONE else None),
+            **{c: st.column_config.NumberColumn(f"{c} (€)", format="localized") for c in ("HT", "TVA", "TTC")},
+        },
     )
 
     st.subheader("2. Plan de financement")
@@ -819,9 +841,13 @@ with onglet_budget:
         num_rows="dynamic",
         hide_index=True,
         width="stretch",
+        # Smartphone : les montants juste après le nom, visibles sans faire défiler le tableau.
+        column_order=["Financeur", "Taux (% du HT)", "Montant (€)", "Public", "Statut"] if SMARTPHONE else None,
         column_config={
             # Valeurs par défaut : une ligne ajoutée est directement utilisable.
-            "Financeur": st.column_config.TextColumn(width="large", default="Nouveau financeur"),
+            "Financeur": st.column_config.TextColumn(
+                width="medium" if SMARTPHONE else "large", default="Nouveau financeur"
+            ),
             "Public": st.column_config.CheckboxColumn(
                 help="Aide d'une personne publique (comptée dans le plafond).", default=True
             ),

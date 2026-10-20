@@ -68,6 +68,8 @@ fichier `app.py`.
   projet » pour tout effacer.
 - **Scénarios** : enregistrer ses paramètres (planning et budget) en JSON pour les retrouver sur un autre poste ou
   les partager.
+- **Utilisable sur smartphone** : sur un téléphone, Gantt compact (libellés courts, détail au toucher des barres),
+  réglages des phases repliés, libellés courts dans les listes et tableaux du budget recentrés sur les montants.
 - **Glossaire** complet des phases de la loi MOP (y compris VISA et DET), et définitions affichées au survol des barres.
 
 ### Onglet « Budget et financement »
@@ -99,7 +101,7 @@ fichier `app.py`.
 | VISA et DET absents du glossaire | Glossaire complet |
 | Pas de bandeau ni de délai MO pour l'AMO | Bandeau AMO et délai de validation |
 | Gantt effacé à chaque modification (bouton) | Gantt recalculé en direct |
-| Tests cassés (modules `config`/`gantt` inexistants) | 134 tests pytest, dont des tests de l'interface (`AppTest`), et 6 parcours dans un vrai navigateur (Playwright) |
+| Tests cassés (modules `config`/`gantt` inexistants) | 136 tests pytest, dont des tests de l'interface (`AppTest`), et 7 parcours dans un vrai navigateur (dont un sur écran de smartphone) (Playwright) |
 | README non à jour | README, CI GitHub Actions (Python 3.11 à 3.14), ruff |
 | Pas d'export ni de date de fin | Excel, CSV, JSON, jalons, indicateurs |
 

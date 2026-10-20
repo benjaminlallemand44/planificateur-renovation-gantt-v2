@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from renovation_gantt.charts import figure_gantt
+from renovation_gantt.charts import figure_gantt, libelle_compact
 from renovation_gantt.phases import EtatProjet, phases_pour_etat
 from renovation_gantt.planning import calculer_planning
 
@@ -62,3 +62,19 @@ def test_bandes_de_treve():
     planning = calculer_planning(phases_pour_etat(EtatProjet.SANS_AUDIT), DEBUT, treve_semaines=2)
     fig = figure_gantt(planning)
     assert "Trêve de fin d'année" in {t.name for t in fig.data}
+
+
+def test_gantt_compact_pour_smartphone():
+    assert libelle_compact("📝 APD - Avant-Projet Définitif") == "📝 APD"
+    assert len(libelle_compact("🦺 Recrutement du contrôleur technique et du CSPS")) <= 18
+    planning = calculer_planning(phases_pour_etat(EtatProjet.MOE_SELECTIONNEE), DEBUT, financement_semaines=6)
+    fig = figure_gantt(planning, compact=True)
+    libelles = {y for trace in fig.data for y in (trace.y if trace.y is not None else []) if y}
+    assert "📝 APD" in libelles
+    # Jalons sans texte (détaillés dans le tableau) mais toujours tracés.
+    assert not any("◆" in (a.text or "") for a in fig.layout.annotations)
+    assert len(fig.layout.shapes) == len(figure_gantt(planning).layout.shapes)
+
+
+def test_libelles_courts_des_etats():
+    assert all(len(e.libelle_court) <= 40 for e in EtatProjet)

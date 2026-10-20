@@ -32,8 +32,19 @@ COULEURS_TYPES = {
 COULEUR_TREVE = "#e6e6e6"
 
 
-def figure_gantt(planning: Planning, aujourd_hui: date | None = None) -> go.Figure:
-    """Diagramme de Gantt : barres par phase, bandeaux par catégorie et jalons."""
+LONGUEUR_LIBELLE_COMPACT = 18
+
+
+def libelle_compact(tache: str, longueur: int = LONGUEUR_LIBELLE_COMPACT) -> str:
+    """Libellé court d'une phase pour un petit écran : « 📝 APD - Avant-Projet Définitif » → « 📝 APD »."""
+    court = tache.split(" - ")[0]
+    return court if len(court) <= longueur else court[: longueur - 1].rstrip() + "…"
+
+
+def figure_gantt(planning: Planning, aujourd_hui: date | None = None, compact: bool = False) -> go.Figure:
+    """Diagramme de Gantt : barres par phase, bandeaux par catégorie et jalons.
+
+    ``compact`` : version pour smartphone (libellés courts, jalons sans texte, marges réduites)."""
     df = planning.taches.copy()
     if df.empty:
         raise ValueError("Le planning ne contient aucune tâche à afficher.")
@@ -51,6 +62,10 @@ def figure_gantt(planning: Planning, aujourd_hui: date | None = None) -> go.Figu
         + " semaine(s)"
     )
 
+    if compact:
+        # Le nom complet reste visible au survol (ou au toucher) de la barre.
+        df["Survol"] = df["Tache"] + "<br>" + df["Survol"]
+        df["Tache"] = df["Tache"].map(libelle_compact)
     ordre_taches = list(dict.fromkeys(df["Tache"]))
     fig = px.timeline(
         df,
@@ -63,7 +78,8 @@ def figure_gantt(planning: Planning, aujourd_hui: date | None = None) -> go.Figu
         category_orders={"Tache": ordre_taches, "Type": list(COULEURS_TYPES)},
     )
     fig.update_traces(
-        hovertemplate="<b>%{y}</b><br>%{customdata[0]}<br>Catégorie : %{customdata[1]}<extra></extra>",
+        hovertemplate=("%{customdata[0]}" if compact else "<b>%{y}</b><br>%{customdata[0]}")
+        + "<br>Catégorie : %{customdata[1]}<extra></extra>",
         marker_line_width=1,
         marker_line_color="black",
     )
@@ -74,12 +90,24 @@ def figure_gantt(planning: Planning, aujourd_hui: date | None = None) -> go.Figu
     formes: list[dict] = []
     annotations: list[dict] = []
     _ajouter_treve(fig, planning, formes)
-    _ajouter_bandeaux(df, formes, annotations)
-    _ajouter_jalons(planning, formes, annotations)
+    _ajouter_bandeaux(df, formes, annotations, largeur_caractere=0.02 if compact else 0.0075)
+    _ajouter_jalons(planning, formes, annotations, avec_texte=not compact)
     if aujourd_hui and planning.date_debut <= aujourd_hui <= planning.date_fin_affichage:
-        _ligne_verticale(formes, annotations, aujourd_hui, "Aujourd'hui", "#888888", "dot")
+        _ligne_verticale(formes, annotations, aujourd_hui, "" if compact else "Aujourd'hui", "#888888", "dot")
 
     fig.update_layout(shapes=formes, annotations=annotations)
+    if compact:
+        # Petit écran : les jalons sont détaillés dans le tableau sous le graphique.
+        fig.update_yaxes(tickfont=dict(size=10))
+        fig.update_xaxes(tickformat="%m/%y", nticks=5, tickangle=0, tickfont=dict(size=10))
+        fig.update_layout(
+            height=24 * len(ordre_taches) + 230,
+            margin=dict(l=4, r=4, t=70, b=20),
+            plot_bgcolor="white",
+            legend=dict(orientation="h", yanchor="top", y=-0.08, x=0, title=None, font=dict(size=10)),
+            title=dict(text="📅 Gantt du projet", font=dict(size=15, color="#0915a6")),
+        )
+        return fig
     fig.update_layout(
         height=max(560, 32 * len(ordre_taches) + 220),
         margin=dict(l=20, r=20, t=110, b=40),
@@ -139,14 +167,16 @@ def libelle_bandeau(groupe: Groupe, fraction: float, largeur_caractere: float = 
     return ""
 
 
-def _ajouter_bandeaux(df: pd.DataFrame, formes: list[dict], annotations: list[dict]) -> None:
+def _ajouter_bandeaux(
+    df: pd.DataFrame, formes: list[dict], annotations: list[dict], largeur_caractere: float = 0.0075
+) -> None:
     etendue = df["Fin"].max() - df["Debut"].min()
     for groupe in Groupe:
         sous_df = df[df["Groupe"] == groupe.value]
         if sous_df.empty:
             continue
         debut, fin = sous_df["Debut"].min(), sous_df["Fin"].max()
-        texte = libelle_bandeau(groupe, (fin - debut) / etendue)
+        texte = libelle_bandeau(groupe, (fin - debut) / etendue, largeur_caractere)
         y0, y1 = (1.10, 1.16) if groupe is Groupe.FINANCEMENT else (1.02, 1.08)
         formes.append(
             dict(
@@ -190,10 +220,11 @@ def etiquettes_a_droite(planning: Planning) -> list[bool]:
     return resultat
 
 
-def _ajouter_jalons(planning: Planning, formes: list[dict], annotations: list[dict]) -> None:
+def _ajouter_jalons(planning: Planning, formes: list[dict], annotations: list[dict], avec_texte: bool = True) -> None:
     for jalon, a_droite in zip(planning.jalons, etiquettes_a_droite(planning), strict=True):
         couleur = "#c00000" if jalon.nom == "Fin du projet" else "#444444"
-        _ligne_verticale(formes, annotations, jalon.date, f"◆ {jalon.nom}", couleur, "dash", a_droite)
+        texte = f"◆ {jalon.nom}" if avec_texte else ""
+        _ligne_verticale(formes, annotations, jalon.date, texte, couleur, "dash", a_droite)
 
 
 def _ligne_verticale(
@@ -209,6 +240,8 @@ def _ligne_verticale(
     formes.append(
         dict(type="line", xref="x", yref="paper", x0=x, x1=x, y0=0, y1=1, line=dict(color=couleur, width=1, dash=style))
     )
+    if not texte:
+        return
     annotations.append(
         dict(
             x=x,

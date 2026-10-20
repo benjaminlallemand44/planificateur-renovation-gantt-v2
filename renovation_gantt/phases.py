@@ -19,6 +19,20 @@ class EtatProjet(str, Enum):
     RECRUTEMENT_MOE = "Nous voulons lancer notre marché de recrutement de maîtrise d'oeuvre"
     MOE_SELECTIONNEE = "Nous venons de sélectionner notre équipe de maitrise d'oeuvre"
 
+    @property
+    def libelle_court(self) -> str:
+        """Libellé tenant sur une ligne d'écran de smartphone."""
+        return LIBELLES_COURTS_ETATS[self]
+
+
+LIBELLES_COURTS_ETATS = {
+    EtatProjet.SANS_AUDIT: "Pas encore d'audit énergétique",
+    EtatProjet.AUDIT_RECU: "Études préalables reçues (audit)",
+    EtatProjet.AMO_PROGRAMMISTE: "Recours à un AMO programmiste",
+    EtatProjet.RECRUTEMENT_MOE: "Lancement du marché de MOE",
+    EtatProjet.MOE_SELECTIONNEE: "Équipe de MOE sélectionnée",
+}
+
 
 class Groupe(str, Enum):
     """Grandes catégories d'étapes, affichées en bandeau au-dessus du Gantt."""
