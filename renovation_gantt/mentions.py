@@ -35,9 +35,13 @@ d'adresses électroniques ou de numéros de téléphone.
   Aucune copie n'est conservée.
 
 **Hébergement.** L'application est hébergée par Streamlit Community Cloud, service de la société américaine
-Snowflake Inc., dans des centres de données de Google Cloud Platform qui peuvent être situés hors de l'Union
-européenne, notamment aux États-Unis. Comme tout hébergeur, il peut conserver des journaux techniques de connexion
-(adresse IP, date et heure), selon sa propre politique de confidentialité (contact : {CONTACT_HEBERGEUR}).
+Snowflake Inc., dans des centres de données de fournisseurs d'infrastructure cloud dont l'hébergeur ne précise pas
+le pays. Les échanges sont chiffrés (HTTPS). Vos saisies peuvent donc transiter par des serveurs situés hors de
+l'Union européenne, notamment aux États-Unis : Snowflake déclare encadrer ces transferts par le cadre de protection
+des données UE–États-Unis (Data Privacy Framework) et les clauses contractuelles types de la Commission européenne.
+Comme tout hébergeur, il collecte automatiquement des données techniques de connexion (adresse IP, navigateur,
+heures d'accès), selon sa propre politique de confidentialité (contact : {CONTACT_HEBERGEUR}). Les statistiques de
+visite mises à notre disposition sont anonymisées.
 
 **Pas de traceurs.** Aucun cookie publicitaire ni outil de mesure d'audience n'est utilisé par l'application.
 
