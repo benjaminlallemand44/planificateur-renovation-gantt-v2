@@ -30,6 +30,8 @@ def _saisir_cellule(page: Page, ligne: int, decalage_colonne: int, valeur: str) 
     """Saisit une valeur dans le plan de financement : ligne (à partir de 0), colonne à droite de « Financeur »."""
     grille = page.locator('.st-key-editeur_financeurs [data-testid="stDataFrame"]')
     grille.scroll_into_view_if_needed()
+    # Laisse le défilement se terminer : sinon le clic (aux coordonnées) peut tomber à côté de la cellule.
+    page.wait_for_timeout(400)
     boite = grille.bounding_box()
     # Le tableau est dessiné dans un canvas : clic sur la cellule « Financeur » de la ligne (lignes de 35 px).
     page.mouse.click(boite["x"] + 120, boite["y"] + 35 + 35 * ligne + 17)
