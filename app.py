@@ -56,6 +56,14 @@ from renovation_gantt.budget import (
 )
 from renovation_gantt.charts import figure_gantt
 from renovation_gantt.export import Scenario, planning_vers_csv, planning_vers_excel, planning_vers_ics
+from renovation_gantt.mentions import (
+    AIDE_MEMORISER,
+    BANDEAU,
+    CASE_MEMORISER,
+    DONNEES_ET_CONFIDENTIALITE,
+    MENTIONS_LEGALES,
+    RAPPEL_BUDGET,
+)
 from renovation_gantt.pdf import planning_vers_pdf
 from renovation_gantt.phases import (
     ARTICLES_INSTRUCTION,
@@ -194,8 +202,9 @@ def _appliquer_scenario(scenario: Scenario) -> None:
 
 
 # --------------------------------------------------------------------------
-# Sauvegarde automatique dans le navigateur (localStorage) : les saisies survivent à un rechargement de la page
-# ou à une mise à jour de l'application, sur le même ordinateur et le même navigateur.
+# Sauvegarde dans le navigateur (localStorage), seulement si l'utilisateur coche « Mémoriser mes saisies » :
+# les saisies survivent alors à un rechargement de la page ou à une mise à jour de l'application, sur le même
+# ordinateur et le même navigateur. Rien n'est écrit sur l'appareil sans ce consentement.
 
 CLE_MEMOIRE = "planificateur-renovation-gantt:scenario"
 _JS_MEMOIRE = """
@@ -209,7 +218,7 @@ export default function ({ data, setStateValue }) {
     return;
   }
   try {
-    // Pas encore de scénario (état du projet non choisi, ou « Nouveau projet ») : on efface la sauvegarde.
+    // Case « Mémoriser » décochée, ou pas encore de scénario (« Nouveau projet ») : on efface la sauvegarde.
     if (data.json === null) window.localStorage.removeItem(cle);
     else if (data.json !== stocke) window.localStorage.setItem(cle, data.json);
   } catch (e) { /* quota dépassé ou stockage refusé : la sauvegarde manuelle (.json) reste possible */ }
@@ -226,6 +235,8 @@ def _restaurer_memoire() -> None:
     st.session_state["memoire_prete"] = True
     if not lu.get("contenu"):
         return
+    # Une sauvegarde n'existe que si l'utilisateur avait coché « Mémoriser » : son choix est conservé.
+    st.session_state["memoriser"] = True
     try:
         _appliquer_scenario(Scenario.depuis_json(lu["contenu"]))
     except ValueError:
@@ -235,7 +246,7 @@ def _restaurer_memoire() -> None:
 
 def _nouveau_projet() -> None:
     """Efface toutes les saisies ; la sauvegarde du navigateur est remplacée par les valeurs par défaut."""
-    garder = {"jeton_memoire", "memoire_prete", "memoire_navigateur"}
+    garder = {"jeton_memoire", "memoire_prete", "memoire_navigateur", "memoriser"}
     for cle in [c for c in st.session_state if c not in garder]:
         del st.session_state[cle]
 
@@ -249,7 +260,7 @@ def _sauvegarder_dans_le_navigateur(json_scenario: str | None) -> None:
             "cle": CLE_MEMOIRE,
             "jeton": st.session_state.setdefault("jeton_memoire", uuid.uuid4().hex),
             "pret": bool(st.session_state.get("memoire_prete")),
-            "json": json_scenario,
+            "json": json_scenario if st.session_state.get("memoriser") else None,
         },
         on_lu_change=_restaurer_memoire,
         height=0,
@@ -309,8 +320,8 @@ with st.sidebar:
     if st.session_state.pop("memoire_restauree", False):
         st.toast("Saisies de votre dernière visite restaurées.", icon="💾")
     st.caption(
-        "Vos saisies sont enregistrées automatiquement dans ce navigateur. Pour les retrouver sur un autre poste "
-        "ou les partager, téléchargez le scénario (.json)."
+        "Pour retrouver vos saisies sur un autre poste ou les partager, téléchargez le scénario (.json) ; "
+        "pour les garder dans ce navigateur, cochez « Mémoriser mes saisies »."
     )
     st.button("🗒️ Nouveau projet (tout effacer)", on_click=_nouveau_projet, width="stretch")
     st.file_uploader("Charger un scénario (.json)", type="json", key="fichier_scenario", on_change=_charger_scenario)
@@ -328,6 +339,8 @@ with st.sidebar:
         key=_defaut("afficher_delais", False),
         help="Par défaut, les délais de validation du maître d'ouvrage sont fixés.",
     )
+    with st.expander("⚖️ Mentions légales"):
+        st.markdown(MENTIONS_LEGALES)
     st.caption(f"Version {__version__}")
 
 
@@ -339,6 +352,13 @@ st.markdown(
     "Indiquez où en est votre projet et sa **date de début**, puis ajustez les durées "
     "(en **semaines**). Le diagramme de Gantt se met à jour automatiquement."
 )
+st.info(BANDEAU)
+col_memoire, col_rgpd = st.columns([1, 2])
+with col_memoire:
+    st.checkbox(CASE_MEMORISER, key=_defaut("memoriser", False), help=AIDE_MEMORISER)
+with col_rgpd:
+    with st.expander("🔒 Données et confidentialité"):
+        st.markdown(DONNEES_ET_CONFIDENTIALITE)
 
 col_nom, col_region, col_dep = st.columns([2, 1, 1])
 with col_nom:
@@ -666,6 +686,7 @@ with onglet_budget:
         "dépenses et recettes par année budgétaire**, calé sur le planning de l'onglet précédent. Les taux par "
         "défaut sont des ordres de grandeur, à ajuster à votre projet."
     )
+    st.caption(RAPPEL_BUDGET)
 
     # 1. Coût de l'opération
     st.subheader("1. Coût de l'opération")

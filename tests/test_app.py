@@ -113,3 +113,13 @@ def test_region_departement_et_financeurs():
     noms = [f.nom for f in at.session_state["financeurs"]]
     assert "Région : Pays de la Loire" in noms
     assert "Département : Loire-Atlantique (44)" in noms
+
+
+def test_informations_rgpd_et_mentions_legales():
+    from renovation_gantt.mentions import CONTACT, EDITEUR
+
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert at.checkbox(key="memoriser").value is False  # consentement non présumé
+    textes = " ".join(e.value for e in at.markdown) + " ".join(e.body for e in at.info)
+    assert "Vos données restent chez vous" in textes
+    assert EDITEUR in textes and CONTACT in textes

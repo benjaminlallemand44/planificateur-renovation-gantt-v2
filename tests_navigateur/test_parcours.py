@@ -122,13 +122,32 @@ def test_ajout_d_un_financeur(page: Page):
     expect(page.get_by_text(re.compile(r"Aides publiques \(1,8 % du HT\)"))).to_be_visible()
 
 
+def test_rien_n_est_memorise_sans_consentement(page: Page):
+    """Case « Mémoriser » décochée (par défaut) : rien n'est écrit dans le navigateur."""
+    nom = page.get_by_role("textbox", name="Nom du projet")
+    nom.fill("École Jules Ferry")
+    nom.press("Enter")
+    _choisir_etat(page, "Nous venons de sélectionner notre équipe de maitrise d'oeuvre")
+    assert page.evaluate("Object.keys(localStorage).filter(k => k.startsWith('planificateur'))") == []
+    page.reload()
+    page.wait_for_selector('[data-testid="stSelectbox"]', timeout=30_000)
+    _attendre_calcul(page)
+    expect(page.get_by_role("textbox", name="Nom du projet")).to_have_value("")
+
+
 def test_sauvegarde_automatique_dans_le_navigateur(page: Page):
-    """Les saisies reviennent après un rechargement de la page ; « Nouveau projet » les efface."""
+    """Case cochée : les saisies reviennent après un rechargement ; la décocher les efface."""
+    page.get_by_text("Mémoriser mes saisies sur cet appareil", exact=True).click()
+    _attendre_calcul(page)
     nom = page.get_by_role("textbox", name="Nom du projet")
     nom.fill("École Jules Ferry")
     nom.press("Enter")
     _choisir_etat(page, "Nous venons de sélectionner notre équipe de maitrise d'oeuvre")
     _ouvrir_budget(page, 750_000)
+    # La sauvegarde est écrite par le navigateur juste après le calcul : on attend qu'elle contienne le montant.
+    page.wait_for_function(
+        "() => (localStorage.getItem('planificateur-renovation-gantt:scenario') || '').includes('750000')"
+    )
 
     page.reload()
     page.wait_for_selector('[data-testid="stSelectbox"]', timeout=30_000)
@@ -137,9 +156,12 @@ def test_sauvegarde_automatique_dans_le_navigateur(page: Page):
     page.get_by_role("tab", name="💶 Budget et financement").click()
     expect(page.get_by_role("spinbutton", name="Montant estimé des travaux")).to_have_value("750000")
 
-    page.get_by_role("button", name="Nouveau projet (tout effacer)").click()
+    expect(page.get_by_role("checkbox", name="Mémoriser mes saisies sur cet appareil")).to_be_checked()
+
+    # Décocher la case efface la sauvegarde.
+    page.get_by_text("Mémoriser mes saisies sur cet appareil", exact=True).click()
     _attendre_calcul(page)
-    expect(page.get_by_role("textbox", name="Nom du projet")).to_have_value("")
+    assert page.evaluate("Object.keys(localStorage).filter(k => k.startsWith('planificateur'))") == []
     page.reload()
     page.wait_for_selector('[data-testid="stSelectbox"]', timeout=30_000)
     _attendre_calcul(page)
@@ -160,8 +182,13 @@ def test_affichage_smartphone(navigateur, url_app):
         page.goto(url_app)
         page.wait_for_selector('[data-testid="stSelectbox"]', timeout=30_000)
         _attendre_calcul(page)
-        page.locator('[data-testid="stSelectbox"]').filter(has_text="Où en êtes-vous").locator("input").first.click()
-        page.get_by_role("option", name="Équipe de MOE sélectionnée").click()
+        champ = page.locator('[data-testid="stSelectbox"]').filter(has_text="Où en êtes-vous").locator("input").first
+        champ.scroll_into_view_if_needed()
+        champ.click()
+        # Libellé court propre au smartphone : on le tape pour filtrer la liste, puis on valide.
+        page.keyboard.type("Équipe de MOE")
+        expect(page.get_by_role("option", name="Équipe de MOE sélectionnée")).to_be_visible()
+        page.keyboard.press("Enter")
         _attendre_calcul(page)
         expect(page.locator(".js-plotly-plot").first).to_be_visible()
         expect(page.locator(".js-plotly-plot").first).to_contain_text("Gantt du projet")

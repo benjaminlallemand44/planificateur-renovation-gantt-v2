@@ -63,9 +63,11 @@ fichier `app.py`.
 - **Exports** : **PDF A4 paysage prêt à présenter** (Gantt, synthèse, jalons, détail des phases, budget et financement),
   Excel (feuilles Résumé, Planning, Jalons), CSV (compatible Excel FR), **jalons au format agenda (.ics)** pour
   Outlook ou Google Agenda, et image du Gantt (icône 📷).
-- **Sauvegarde automatique dans le navigateur** : les saisies (planning et budget) reviennent après un rechargement
-  de la page ou une mise à jour de l'application, sur le même ordinateur et le même navigateur. Bouton « Nouveau
-  projet » pour tout effacer.
+- **Sauvegarde dans le navigateur, avec consentement** : si l'utilisateur coche « Mémoriser mes saisies sur cet
+  appareil », les saisies (planning et budget) reviennent après un rechargement de la page ou une mise à jour de
+  l'application, sur le même ordinateur et le même navigateur. La décocher efface la sauvegarde.
+- **Données personnelles (RGPD) et mentions légales** : aucune saisie n'est conservée côté serveur ni dans une base
+  de données ; information détaillée dans l'application (textes dans `renovation_gantt/mentions.py`).
 - **Scénarios** : enregistrer ses paramètres (planning et budget) en JSON pour les retrouver sur un autre poste ou
   les partager.
 - **Utilisable sur smartphone** : sur un téléphone, Gantt compact (libellés courts, détail au toucher des barres),
@@ -101,7 +103,7 @@ fichier `app.py`.
 | VISA et DET absents du glossaire | Glossaire complet |
 | Pas de bandeau ni de délai MO pour l'AMO | Bandeau AMO et délai de validation |
 | Gantt effacé à chaque modification (bouton) | Gantt recalculé en direct |
-| Tests cassés (modules `config`/`gantt` inexistants) | 136 tests pytest, dont des tests de l'interface (`AppTest`), et 7 parcours dans un vrai navigateur (dont un sur écran de smartphone) (Playwright) |
+| Tests cassés (modules `config`/`gantt` inexistants) | 137 tests pytest, dont des tests de l'interface (`AppTest`), et 8 parcours dans un vrai navigateur (dont un sur écran de smartphone) (Playwright) |
 | README non à jour | README, CI GitHub Actions (Python 3.11 à 3.14), ruff |
 | Pas d'export ni de date de fin | Excel, CSV, JSON, jalons, indicateurs |
 
