@@ -54,6 +54,7 @@ from renovation_gantt.budget import (
     nommer_collectivites,
     postes_par_defaut,
 )
+from renovation_gantt.charte import BLANC, BLEU, CYAN, FAMILLE_LABEUR, FAMILLE_TITRAGE, LILA, NOIR, ORANGE
 from renovation_gantt.charts import figure_gantt
 from renovation_gantt.export import Scenario, planning_vers_csv, planning_vers_excel, planning_vers_ics
 from renovation_gantt.mentions import (
@@ -87,16 +88,27 @@ RACINE = Path(__file__).parent
 LOGO = RACINE / "images" / "Logo_ACTEE_CMYN-HD.png"
 ICONES_GROUPES = {Groupe.ETUDES: "📋", Groupe.AMO: "🧠", Groupe.SELECTION_MOE: "🧑‍💼", Groupe.MOE: "🏗️"}
 
-st.set_page_config(page_title="Planificateur rénovation", page_icon="📊", layout="wide")
+# Icône d'onglet : logotype réduit de la charte ACTEE (cercle cyan sur fond blanc).
+st.set_page_config(
+    page_title="Planificateur rénovation", page_icon=str(RACINE / "images" / "favicon-actee.png"), layout="wide"
+)
 
 # Smartphone : détecté par le navigateur déclaré (« Mobi » : iPhone, Android…). Sert à compacter le Gantt et à
 # replier les réglages pour que le diagramme ne soit pas relégué tout en bas de la page.
 SMARTPHONE = "Mobi" in (st.context.headers.get("User-Agent") or "")
 
+# Charte ACTEE (couleurs et polices dans .streamlit/config.toml) : grand titre souligné d'un trait noir
+# (épaisseur ≈ 1/6 du corps), chiffres clés en Bitter Black, encarts à contour bleu et angles droits.
 # Petits écrans : titre et indicateurs moins imposants.
 st.html(
     """
 <style>
+h1 { border-bottom: 0.17em solid #000; padding-bottom: 0.15em !important; margin-bottom: 0.4em !important; }
+h1, h2, h3 { color: #000 !important; }
+[data-testid="stMetricValue"] { font-family: Bitter, Georgia, serif; font-weight: 900; color: #000; }
+[data-testid="stAlert"] > div { border: 2px solid #0a17a6; background: #fff; color: #000; }
+[data-testid="stAlert"] [data-testid="stMarkdownContainer"] { color: #000; }
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] * { color: #000 !important; }
 @media (max-width: 640px) {
   h1 { font-size: 1.6rem !important; }
   [data-testid="stMetricValue"] { font-size: 1.6rem; }
@@ -347,7 +359,7 @@ with st.sidebar:
 # --------------------------------------------------------------------------
 # En-tête
 
-st.title("📊 Assistant planification du projet de rénovation")
+st.title("Assistant planification du projet de rénovation")
 st.markdown(
     "Indiquez où en est votre projet et sa **date de début**, puis ajustez les durées "
     "(en **semaines**). Le diagramme de Gantt se met à jour automatiquement."
@@ -939,14 +951,17 @@ with onglet_budget:
                 values=list(parts.values()),
                 hole=0.55,
                 sort=False,
-                marker=dict(colors=["#0915a6", "#2e9e44", "#7b2cbf", "#ff5300"]),
+                marker=dict(colors=[BLEU, CYAN, LILA, ORANGE]),
                 textinfo="percent",
+                # Texte blanc seulement sur le bleu (charte) ; noir sur cyan, lila et orange.
+                insidetextfont=dict(color=[BLANC, NOIR, NOIR, NOIR], family=FAMILLE_LABEUR),
                 textposition="inside",
                 hovertemplate="%{label} : %{value:,.0f} €<extra></extra>",
             )
         )
         donut.update_layout(
-            title=dict(text="Qui finance le coût TTC ?", font=dict(size=16, color="#0915a6")),
+            title=dict(text="Qui finance le coût TTC ?", font=dict(size=16, family=FAMILLE_TITRAGE, color=NOIR)),
+            font=dict(family=FAMILLE_LABEUR, color=NOIR),
             showlegend=True,
             legend=dict(orientation="h", y=-0.05),
             separators=", ",
@@ -991,15 +1006,15 @@ with onglet_budget:
         e3.metric("Année du besoin maximal", str(annee_besoin))
 
         fig = go.Figure()
-        fig.add_bar(x=echeancier["Année"], y=-echeancier["Dépenses TTC"], name="Dépenses TTC", marker_color="#ff5300")
-        fig.add_bar(x=echeancier["Année"], y=echeancier["Aides"], name="Aides", marker_color="#2e9e44")
-        fig.add_bar(x=echeancier["Année"], y=echeancier["FCTVA"], name="FCTVA", marker_color="#7b2cbf")
+        fig.add_bar(x=echeancier["Année"], y=-echeancier["Dépenses TTC"], name="Dépenses TTC", marker_color=ORANGE)
+        fig.add_bar(x=echeancier["Année"], y=echeancier["Aides"], name="Aides", marker_color=BLEU)
+        fig.add_bar(x=echeancier["Année"], y=echeancier["FCTVA"], name="FCTVA", marker_color=CYAN)
         fig.add_scatter(
             x=echeancier["Année"],
             y=echeancier["Cumul"],
             name="Solde cumulé",
             mode="lines+markers",
-            line=dict(color="#0915a6", width=3),
+            line=dict(color=NOIR, width=3),
         )
         fig.update_layout(
             barmode="relative",
@@ -1010,7 +1025,8 @@ with onglet_budget:
             yaxis=dict(title="€", gridcolor="lightgrey", tickformat=",.0f"),
             xaxis=dict(dtick=1),
             separators=", ",
-            title=dict(text="Dépenses et recettes par année", font=dict(size=16, color="#0915a6")),
+            title=dict(text="Dépenses et recettes par année", font=dict(size=16, family=FAMILLE_TITRAGE, color=NOIR)),
+            font=dict(family=FAMILLE_LABEUR, color=NOIR),
         )
         st.plotly_chart(fig, width="stretch", key="echeancier_budget")
         st.dataframe(

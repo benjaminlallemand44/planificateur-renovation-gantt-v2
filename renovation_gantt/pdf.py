@@ -7,6 +7,7 @@ d'images Plotly nécessite un navigateur Chrome, absent de Streamlit Community C
 from __future__ import annotations
 
 import io
+import logging
 import re
 from datetime import date, timedelta
 from pathlib import Path
@@ -19,16 +20,31 @@ import matplotlib.dates as mdates  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 from fpdf import FPDF  # noqa: E402
 from fpdf.fonts import FontFace  # noqa: E402
+from matplotlib import font_manager  # noqa: E402
 from matplotlib.patches import Patch, Rectangle  # noqa: E402
 from matplotlib.transforms import blended_transform_factory  # noqa: E402
 
 from .budget import Budget  # noqa: E402
+from .charte import BLEU, LABEUR, NOIR, ORANGE, POLICES, rgb  # noqa: E402
 from .charts import COULEUR_TREVE, COULEURS_TYPES, etiquettes_a_droite, libelle_bandeau  # noqa: E402
 from .export import indicateurs  # noqa: E402
 from .phases import COULEURS_GROUPES, EtatProjet, Groupe  # noqa: E402
 from .planning import Planning  # noqa: E402
 
-BLEU = (9, 21, 166)
+# Charte ACTEE : textes en noir, titres en Bitter Black soulignés d'un trait noir, en-têtes de tableau en aplat
+# bleu (texte blanc). Polices de secours (DejaVu) pour les rares caractères absents des polices de la charte.
+NOIR_RGB = rgb(NOIR)
+BLEU_RGB = rgb(BLEU)
+for _police in (POLICES["labeur-medium"], POLICES["labeur-bold"]):
+    font_manager.fontManager.addfont(str(_police))
+# Le choix de la graisse « medium » produit des messages sans conséquence quand la police de secours sert.
+logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
+STYLE_MATPLOTLIB = {
+    "font.family": [LABEUR, "DejaVu Sans"],
+    "font.weight": 500,
+    "text.color": NOIR,
+    "axes.labelcolor": NOIR,
+}
 MOIS_FR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
 _EMOJIS = re.compile("[\U0001f000-\U0001faff☀-➿⬀-⯿️‍]")
 
@@ -55,6 +71,10 @@ def planning_vers_pdf(
     polices = Path(matplotlib.get_data_path()) / "fonts" / "ttf"
     pdf.add_font("DejaVu", "", polices / "DejaVuSans.ttf")
     pdf.add_font("DejaVu", "B", polices / "DejaVuSans-Bold.ttf")
+    pdf.add_font("Bitter", "B", POLICES["titrage-black"])
+    pdf.add_font("Schibsted", "", POLICES["labeur-medium"])
+    pdf.add_font("Schibsted", "B", POLICES["labeur-bold"])
+    pdf.set_fallback_fonts(["DejaVu"])
 
     # Page 1 : en-tête et diagramme de Gantt
     pdf.add_page()
@@ -123,8 +143,9 @@ def _pages_budget(pdf: FPDF, budget: Budget, planning: Planning) -> None:
         ("Reste à charge net de la collectivité", "", _euros(budget.reste_a_charge), ""),
     ]
     _tableau(pdf, lignes, (110, 40, 32, 32), alignements=("LEFT", "LEFT", "RIGHT", "RIGHT"))
-    pdf.set_font("DejaVu", "", 8)
-    pdf.set_text_color(*(200, 30, 30) if budget.depasse_plafond else (60, 60, 60))
+    # Alerte en gras (le texte reste noir : l'orange n'est autorisé qu'en grand corps).
+    pdf.set_font("Schibsted", "B" if budget.depasse_plafond else "", 8)
+    pdf.set_text_color(*NOIR_RGB)
     pdf.multi_cell(
         0,
         4.5,
@@ -146,8 +167,8 @@ def _pages_budget(pdf: FPDF, budget: Budget, planning: Planning) -> None:
             for r in echeancier.itertuples()
         ]
         _tableau(pdf, lignes, (25, 35, 35, 35, 35, 35), alignements=("LEFT",) + ("RIGHT",) * 5)
-        pdf.set_font("DejaVu", "", 8)
-        pdf.set_text_color(60, 60, 60)
+        pdf.set_font("Schibsted", "", 8)
+        pdf.set_text_color(*NOIR_RGB)
         pdf.multi_cell(
             0,
             4.5,
@@ -161,8 +182,8 @@ def _pages_budget(pdf: FPDF, budget: Budget, planning: Planning) -> None:
 class _Document(FPDF):
     def footer(self) -> None:
         self.set_y(-11)
-        self.set_font("DejaVu", "", 7)
-        self.set_text_color(110, 110, 110)
+        self.set_font("Schibsted", "", 7)
+        self.set_text_color(*NOIR_RGB)
         self.cell(
             0,
             5,
@@ -173,28 +194,34 @@ class _Document(FPDF):
 
 
 def _entete(pdf: FPDF, etat: EtatProjet | None, logo: Path | None, edition: date, nom_projet: str = "") -> None:
+    # Logo ACTEE + FNCCR en haut à gauche, à 10 mm des bords, au moins 40 mm de large (14 mm de haut ≈ 45 mm).
     x_texte = 10
     if logo is not None and Path(logo).exists():
-        pdf.image(str(logo), x=10, y=8, h=14)
+        pdf.image(str(logo), x=10, y=10, h=14)
         x_texte = 75
-    pdf.set_xy(x_texte, 8)
-    pdf.set_font("DejaVu", "B", 15)
-    pdf.set_text_color(*BLEU)
-    pdf.cell(0, 7, "Planning prévisionnel du projet de rénovation énergétique")
-    pdf.set_xy(x_texte, 16)
-    pdf.set_font("DejaVu", "", 9)
-    pdf.set_text_color(60, 60, 60)
+    pdf.set_xy(x_texte, 9)
+    pdf.set_font("Bitter", "B", 16)
+    pdf.set_text_color(*NOIR_RGB)
+    pdf.cell(0, 8, "Planning prévisionnel du projet de rénovation énergétique")
+    # Séparateur sous le grand titre : trait noir, épaisseur ≈ 1/6 du corps.
+    pdf.set_draw_color(*NOIR_RGB)
+    pdf.set_line_width(16 / 6 * 0.3528)
+    pdf.line(x_texte, 18, pdf.w - 10, 18)
+    pdf.set_line_width(0.2)
+    pdf.set_xy(x_texte, 20)
+    pdf.set_font("Schibsted", "", 9)
+    pdf.set_text_color(*NOIR_RGB)
     parties = [texte_sans_emoji(nom_projet)] if nom_projet else []
     if etat is not None:
         parties.append(f"Situation de départ : {EtatProjet(etat).value}")
     parties.append(f"Édité le {edition:%d/%m/%Y}")
     pdf.multi_cell(0, 4.5, "  —  ".join(parties))
-    pdf.set_y(max(pdf.get_y(), 24))
+    pdf.set_y(max(pdf.get_y(), 27))
 
 
 def _titre_section(pdf: FPDF, titre: str) -> None:
-    pdf.set_font("DejaVu", "B", 11)
-    pdf.set_text_color(*BLEU)
+    pdf.set_font("Bitter", "B", 12)
+    pdf.set_text_color(*NOIR_RGB)
     pdf.cell(0, 7, titre, new_x="LMARGIN", new_y="NEXT")
 
 
@@ -204,9 +231,10 @@ def _tableau(
     largeurs: tuple[int, ...],
     alignements: tuple[str, ...] | None = None,
 ) -> None:
-    pdf.set_font("DejaVu", "", 8)
-    pdf.set_text_color(0, 0, 0)
-    entete = FontFace(emphasis="BOLD", fill_color=(230, 233, 250))
+    pdf.set_font("Schibsted", "", 8)
+    pdf.set_text_color(*NOIR_RGB)
+    pdf.set_draw_color(*NOIR_RGB)
+    entete = FontFace(emphasis="BOLD", color=(255, 255, 255), fill_color=BLEU_RGB)
     with pdf.table(
         col_widths=largeurs,
         width=sum(largeurs),
@@ -231,6 +259,11 @@ def _gantt_png(planning: Planning) -> io.BytesIO:
     lignes = list(dict.fromkeys(df["Libelle"]))
     position = {nom: len(lignes) - 1 - i for i, nom in enumerate(lignes)}
 
+    with plt.rc_context(STYLE_MATPLOTLIB):
+        return _dessiner_gantt(planning, df, lignes, position)
+
+
+def _dessiner_gantt(planning: Planning, df, lignes: list[str], position: dict[str, int]) -> io.BytesIO:
     fig, ax = plt.subplots(figsize=(11.2, 6.7), dpi=200)
     debut_axe = planning.date_debut - timedelta(days=7)
     fin_axe = planning.date_fin_affichage + timedelta(days=7)
@@ -283,7 +316,7 @@ def _gantt_png(planning: Planning) -> io.BytesIO:
         )
 
     for jalon, a_droite in zip(planning.jalons, etiquettes_a_droite(planning), strict=True):
-        couleur = "#c00000" if jalon.nom == "Fin du projet" else "#444444"
+        couleur = ORANGE if jalon.nom == "Fin du projet" else NOIR
         ax.axvline(jalon.date, color=couleur, lw=0.7, ls="--", zorder=2)
         ax.text(
             mdates.date2num(jalon.date) + (2 if a_droite else -2),
@@ -305,7 +338,7 @@ def _gantt_png(planning: Planning) -> io.BytesIO:
     ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=_mois_graduations(planning)))
     ax.xaxis.set_major_formatter(plt.FuncFormatter(_format_mois))
     ax.tick_params(axis="x", labelsize=6.5)
-    ax.grid(axis="x", color="#dddddd", lw=0.5, zorder=1)
+    ax.grid(axis="x", color="#cccccc", lw=0.5, zorder=1)
     for cote in ("top", "right"):
         ax.spines[cote].set_visible(False)
 

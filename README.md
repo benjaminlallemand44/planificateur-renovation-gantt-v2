@@ -72,6 +72,9 @@ fichier `app.py`.
   les partager.
 - **Utilisable sur smartphone** : sur un téléphone, Gantt compact (libellés courts, détail au toucher des barres),
   réglages des phases repliés, libellés courts dans les listes et tableaux du budget recentrés sur les montants.
+- **Charte graphique ACTEE** : couleurs (bleu majoritaire, orange en touches, cyan, lila), polices Bitter (titres) et
+  Schibsted Grotesk (texte) servies par l'application elle-même, texte en noir, angles droits, logo ACTEE + FNCCR
+  en haut à gauche ; appliquée à l'interface, aux graphiques et au PDF (`renovation_gantt/charte.py`).
 - **Glossaire** complet des phases de la loi MOP (y compris VISA et DET), et définitions affichées au survol des barres.
 
 ### Onglet « Budget et financement »
@@ -119,6 +122,7 @@ renovation_gantt/
 ├── export.py               Excel / CSV / agenda .ics / scénarios JSON
 ├── excel.py                Mise en forme des classeurs (largeurs, neutralisation des formules)
 ├── territoires.py          Régions, départements, zones et vacances d'été
+├── charte.py              Couleurs et polices de la charte ACTEE
 ├── saisie.py               Bornage des valeurs lues dans un scénario
 └── pdf.py                  Export PDF (Gantt matplotlib + mise en page fpdf2)
 tests/                      Tests pytest

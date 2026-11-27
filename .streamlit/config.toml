@@ -1,6 +1,50 @@
+# Charte graphique ACTEE : bleu majoritaire, texte noir, angles droits, Bitter (titres) et Schibsted Grotesk.
 [theme]
-primaryColor = "#0915a6"
 base = "light"
+primaryColor = "#0a17a6"
+textColor = "#000000"
+linkColor = "#0a17a6"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#e0e6de"
+baseRadius = "none"
+font = "Schibsted Grotesk, Arial, sans-serif"
+headingFont = "Bitter, Georgia, serif"
+headingFontWeights = [900, 900, 800, 700, 700, 700]
+chartCategoricalColors = ["#0a17a6", "#ff5400", "#0dcccc", "#d1bffc", "#ffc300", "#5bba50", "#8dc8f8", "#b5dee1", "#634123", "#05700f"]
+
+# Polices servies par l'application (pas d'appel à Google Fonts).
+[[theme.fontFaces]]
+family = "Bitter"
+url = "app/static/fonts/Bitter-Black.ttf"
+weight = "900"
+
+[[theme.fontFaces]]
+family = "Bitter"
+url = "app/static/fonts/Bitter-ExtraBold.ttf"
+weight = "800"
+
+[[theme.fontFaces]]
+family = "Bitter"
+url = "app/static/fonts/Bitter-Bold.ttf"
+weight = "700"
+
+[[theme.fontFaces]]
+family = "Schibsted Grotesk"
+url = "app/static/fonts/SchibstedGrotesk-Medium.ttf"
+weight = "400 500"
+
+[[theme.fontFaces]]
+family = "Schibsted Grotesk"
+url = "app/static/fonts/SchibstedGrotesk-Bold.ttf"
+weight = "600 700"
+
+[[theme.fontFaces]]
+family = "Schibsted Grotesk"
+url = "app/static/fonts/SchibstedGrotesk-ExtraBold.ttf"
+weight = "800 900"
+
+[theme.sidebar]
+backgroundColor = "#e0e6de"
 
 [browser]
 gatherUsageStats = false
@@ -8,3 +52,5 @@ gatherUsageStats = false
 [server]
 # Les scénarios JSON font quelques kilo-octets : inutile d'accepter des fichiers de 200 Mo.
 maxUploadSize = 1
+# Sert les polices de la charte (dossier static/).
+enableStaticServing = true

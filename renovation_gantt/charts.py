@@ -8,6 +8,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
+from .charte import BLEU, BLEU_CIEL, BLEU_EAU, CYAN, FAMILLE_LABEUR, FAMILLE_TITRAGE, GRIS, JAUNE, LILA, NOIR, ORANGE
 from .phases import COULEURS_GROUPES, Groupe
 from .planning import (
     TYPE_ATTENTE,
@@ -20,16 +21,20 @@ from .planning import (
     Planning,
 )
 
+# Charte ACTEE : phases en bleu (majoritaire), délais MO en orange (touches), puis cyan, lila et la gamme
+# complémentaire (jaune pour le financement, comme dans la déclinaison « Financement » de la charte).
 COULEURS_TYPES = {
-    TYPE_PHASE: "#0915a6",
-    TYPE_DELAI_MO: "#ff5300",
-    TYPE_FINANCEMENT: "#2e9e44",
-    TYPE_INSTRUCTION: "#7b2cbf",
-    TYPE_RECOURS: "#c3a6e8",
-    TYPE_ATTENTE: "#f6d55c",
-    TYPE_GPA: "#b8dcc6",
+    TYPE_PHASE: BLEU,
+    TYPE_DELAI_MO: ORANGE,
+    TYPE_FINANCEMENT: JAUNE,
+    TYPE_INSTRUCTION: CYAN,
+    TYPE_RECOURS: BLEU_CIEL,
+    TYPE_ATTENTE: LILA,
+    TYPE_GPA: BLEU_EAU,
 }
-COULEUR_TREVE = "#e6e6e6"
+COULEUR_TREVE = GRIS
+POLICE_GRAPHIQUES = dict(family=FAMILLE_LABEUR, color=NOIR)
+POLICE_TITRE_GRAPHIQUES = dict(family=FAMILLE_TITRAGE, color=NOIR)
 
 
 LONGUEUR_LIBELLE_COMPACT = 18
@@ -105,7 +110,8 @@ def figure_gantt(planning: Planning, aujourd_hui: date | None = None, compact: b
             margin=dict(l=4, r=4, t=70, b=20),
             plot_bgcolor="white",
             legend=dict(orientation="h", yanchor="top", y=-0.08, x=0, title=None, font=dict(size=10)),
-            title=dict(text="📅 Gantt du projet", font=dict(size=15, color="#0915a6")),
+            title=dict(text="Gantt du projet", font=dict(size=15, **POLICE_TITRE_GRAPHIQUES)),
+            font=POLICE_GRAPHIQUES,
         )
         return fig
     fig.update_layout(
@@ -113,7 +119,8 @@ def figure_gantt(planning: Planning, aujourd_hui: date | None = None, compact: b
         margin=dict(l=20, r=20, t=110, b=40),
         plot_bgcolor="white",
         legend=dict(orientation="h", yanchor="top", y=-0.06, x=0, title=None),
-        title=dict(text="📅 Diagramme de Gantt du projet", font=dict(size=18, color="#0915a6")),
+        title=dict(text="Diagramme de Gantt du projet", font=dict(size=18, **POLICE_TITRE_GRAPHIQUES)),
+        font=POLICE_GRAPHIQUES,
     )
     return fig
 
@@ -222,7 +229,7 @@ def etiquettes_a_droite(planning: Planning) -> list[bool]:
 
 def _ajouter_jalons(planning: Planning, formes: list[dict], annotations: list[dict], avec_texte: bool = True) -> None:
     for jalon, a_droite in zip(planning.jalons, etiquettes_a_droite(planning), strict=True):
-        couleur = "#c00000" if jalon.nom == "Fin du projet" else "#444444"
+        couleur = ORANGE if jalon.nom == "Fin du projet" else NOIR
         texte = f"◆ {jalon.nom}" if avec_texte else ""
         _ligne_verticale(formes, annotations, jalon.date, texte, couleur, "dash", a_droite)
 

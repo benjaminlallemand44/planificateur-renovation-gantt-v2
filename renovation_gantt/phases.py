@@ -44,12 +44,13 @@ class Groupe(str, Enum):
     FINANCEMENT = "Financement"
 
 
+# Bandeaux de catégorie (charte ACTEE), tous lisibles avec un texte noir.
 COULEURS_GROUPES: dict[Groupe, str] = {
-    Groupe.ETUDES: "#cfe3ff",
-    Groupe.AMO: "#d6f0e0",
-    Groupe.SELECTION_MOE: "#ffe5cc",
-    Groupe.MOE: "#e6ccff",
-    Groupe.FINANCEMENT: "#d6f5d6",
+    Groupe.ETUDES: "#d1bffc",  # lila
+    Groupe.AMO: "#b5dee1",  # bleu eau
+    Groupe.SELECTION_MOE: "#8dc8f8",  # bleu ciel
+    Groupe.MOE: "#0dcccc",  # cyan
+    Groupe.FINANCEMENT: "#ffc300",  # jaune
 }
 
 
